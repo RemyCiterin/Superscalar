@@ -1,7 +1,7 @@
 RTL = rtl
 BUILD = build
 BSIM = bsim
-PACKAGES = ./src/:../BlueTileLink/src/:+
+PACKAGES = ./src/:./BlueTileLink/src/:+
 SIM_FILE = ./build/mkTop_sim
 TOP = src/Soc.bsv
 

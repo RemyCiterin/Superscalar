@@ -1,0 +1,3 @@
+[submodule "BlueTileLink"]
+	path = BlueTileLink
+	url = git@github.com:RemyCiterin/BlueTileLink.git
