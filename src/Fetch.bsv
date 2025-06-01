@@ -12,6 +12,8 @@ import CSR :: *;
 import TLTypes :: *;
 import Cache :: *;
 
+import BranchPred :: *;
+
 export FetchDecode(..);
 export mkFetchDecode;
 
@@ -27,7 +29,9 @@ function MicroOp#(void) decode(Epoch epoch, Bit#(32) pc, Bit#(32) predPc, Bit#(3
       epoch: epoch,
       instr: instr,
       pipeline: ?,
+      bstate: ?,
       cause: ?,
+      train: ?,
       tval: ?,
       age: ?,
       val: ?,
@@ -40,6 +44,8 @@ function MicroOp#(void) decode(Epoch epoch, Bit#(32) pc, Bit#(32) predPc, Bit#(3
       epoch: epoch,
       tag: DIRECT,
       pipeline: ?,
+      bstate: ?,
+      train: ?,
       instr: ?,
       tval: pc,
       pc: pc,
@@ -58,12 +64,17 @@ interface FetchDecode;
   interface TLMaster#(32, TMul#(SupSize,32),8,8,8) master;
 
   method Action redirect(Bit#(32) nextPc, Epoch nextEpoch);
+
+  method Action trainMis(BranchPredTrain infos);
+  method Action trainHit(BranchPredTrain infos);
 endinterface
 
 typedef struct {
   Super#(Bit#(32)) predPc;
   Super#(Bit#(32)) pc;
-  SupMask mask;
+  Super#(Bool) needTrainHit;
+  Super#(BranchPredState) state;
+  Super#(Bool) mask;
   Epoch epoch;
 } FetchToDecode deriving(Bits, FShow, Eq);
 
@@ -73,6 +84,7 @@ module mkFetchDecode(FetchDecode);
   Fifo#(4, Bit#(TMul#(SupSize, 32))) responseQ <- mkBypassFifo;
 
   let cache <- mkDefaultICache;
+  let bpred <- mkBranchPred;
 
   rule setSource;
     cache.setSource(0);
@@ -83,65 +95,73 @@ module mkFetchDecode(FetchDecode);
     responseQ.enq(result);
   endrule
 
-  Fifo#(4, FetchToDecode) fetchQ <- mkFifo;
+  Fifo#(4, Maybe#(FetchToDecode)) fetchQ <- mkFifo;
   Fifo#(2, Super#(Maybe#(MicroOp#(void)))) decodedQ <- mkFifo;
 
-  Reg#(Age) age <- mkReg(0);
-  Reg#(Epoch) epoch <- mkReg(0);
-  Reg#(Bit#(32)) pc <- mkReg(32'h80000000);
+  Ehr#(2, Epoch) epoch <- mkEhr(0);
+  Ehr#(2, Bit#(32)) pc <- mkEhr(32'h80000000);
 
-  Bit#(32) basePc = pc & ~fromInteger(supSize * 4 - 1);
-
-  rule requestRl;
-    SupMask mask;
-    Super#(Bit#(32)) predPc;
-    Super#(Bit#(32)) currentPc;
-    for (Integer i=0; i < supSize; i = i + 1) begin
-      mask[i] = fromInteger(i) * 4 >= pc - basePc;
-      currentPc[i] = basePc + fromInteger(i) * 4;
-      predPc[i] = basePc + fromInteger(i+1) * 4;
-    end
-
-    pc <= basePc + 4 * fromInteger(supSize);
-
-    fetchQ.enq(FetchToDecode{
-      predPc: predPc,
-      pc: currentPc,
-      epoch: epoch,
-      mask: mask
-    });
-
-    //$display("PC: 0x%h", basePc);
-
-    cache.send(basePc, BCache::Load);
+  rule start;
+    bpred.start(pc[1], epoch[1]);
+    cache.send(pc[1] & ~fromInteger(supSize*4-1), BCache::Load);
   endrule
 
-  //rule blocked;
-  //  if (fetchQ.canDeq && !responseQ.canDeq) $display("blocked");
-  //endrule
+  rule bpredStep if (epoch[0] == bpred.predEpoch);
+    let pred <- bpred.pred();
+    bpred.deq;
 
-  rule responseRl;
+    pc[0] <= pred.pc;
+    fetchQ.enq(Valid(FetchToDecode{
+      pc: pred.current,
+      state: pred.state,
+      predPc: pred.next,
+      needTrainHit: pred.needTrainHit,
+      mask: pred.mask,
+      epoch: epoch[0]
+    }));
+
+    //$display(
+    //  "pc: 0x%h ", pc[0],
+    //  "next: 0x%h ", pred.next[0],
+    //  "mask: 0b%b", pack(pred.mask)
+    //);
+  endrule
+
+  rule ignoreBpred if (epoch[0] != bpred.predEpoch);
+    fetchQ.enq(Invalid);
+    bpred.deq;
+  endrule
+
+  rule decodeStep if (fetchQ.first matches tagged Valid .fetch);
     let resp = responseQ.first;
-    let fetch = fetchQ.first;
     responseQ.deq;
     fetchQ.deq;
 
     Super#(Maybe#(MicroOp#(void))) ret = replicate(Invalid);
 
     for (Integer i=0; i < supSize; i = i + 1) if (fetch.mask[i]) begin
-      ret[i] = Valid(decode(fetch.epoch, fetch.pc[i], fetch.predPc[i], resp[32*i+31:32*i]));
+      let instr = decode(fetch.epoch, fetch.pc[i], fetch.predPc[i], resp[32*i+31:32*i]);
+      instr.train = fetch.needTrainHit[i];
+      instr.bstate = fetch.state[i];
+      ret[i] = Valid(instr);
     end
 
-    if (fetch.epoch == epoch) begin
-      decodedQ.enq(ret);
-    end
+    decodedQ.enq(ret);
+  endrule
+
+  rule ignoreDecode if (fetchQ.first matches Invalid);
+    responseQ.deq;
+    fetchQ.deq;
   endrule
 
   method Action redirect(Bit#(32) nextPc, Epoch nextEpoch);
-    epoch <= nextEpoch;
-    pc <= nextPc;
+    epoch[0] <= nextEpoch;
+    pc[0] <= nextPc;
   endmethod
 
   interface decoded = toFifoO(decodedQ);
   interface master = cache.master;
+
+  method trainHit = bpred.trainHit;
+  method trainMis = bpred.trainMis;
 endmodule

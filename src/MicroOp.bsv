@@ -1,18 +1,10 @@
+import BranchPred :: *;
 import Decode :: *;
 import Utils :: *;
 import TLTypes :: *;
 import Memory :: *;
 import Vector :: *;
 import CSR :: *;
-
-typedef 4 SupSize;
-typedef Vector#(SupSize,t) Super#(type t);
-typedef Super#(Bool) SupMask;
-
-Integer supSize = valueOf(SupSize);
-
-typedef MemoryRequest#(32, TMul#(SupSize,32)) FetchRequest;
-typedef MemoryResponse#(TMul#(SupSize,32)) FetchResponse;
 
 typedef struct {
   Bool flush;
@@ -68,6 +60,12 @@ typedef struct {
   // Destination register
   ArchReg rd;
 
+  // Branch prediction state
+  BranchPredState bstate;
+
+  // Need to train the branch predictor in case of a hit
+  Bool train;
+
   // Payload of the instruction
   t val;
 } MicroOp#(type t) deriving(Bits, FShow, Eq);
@@ -76,10 +74,12 @@ function MicroOp#(b) mapMicroOp(function b f(a x), MicroOp#(a) op) =
   MicroOp{
     exception: op.exception,
     pipeline: op.pipeline,
+    bstate: op.bstate,
     predPc: op.predPc,
     cause: op.cause,
     epoch: op.epoch,
     instr: op.instr,
+    train: op.train,
     val: f(op.val),
     tval: op.tval,
     age: op.age,

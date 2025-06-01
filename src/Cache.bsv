@@ -2,7 +2,7 @@ import BCache :: *;
 import TLTypes :: *;
 import Fifo :: *;
 
-import MicroOp :: *;
+import Utils :: *;
 
 `include "TL.defines"
 

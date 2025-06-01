@@ -12,6 +12,13 @@ import Fifo :: *;
 
 import Decode :: *;
 
+
+typedef 2 SupSize;
+typedef Vector#(SupSize,t) Super#(type t);
+typedef Super#(Bool) SupMask;
+
+Integer supSize = valueOf(SupSize);
+
 // return if a memory access is a MMIO access, by convention the memory from the
 // address 0x8000_0000 is cachable but the rest of memory is not (so is MMIO)
 function Bool isMMIO(Bit#(32) addr);

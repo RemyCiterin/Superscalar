@@ -194,6 +194,7 @@ unsafe extern "C" fn kernel_main(_hartid: usize, _dtb: usize) -> () {
     asm!("fence");
     vector_bench();
     asm!("fence");
+
     trap::init();
 
     unsafe {

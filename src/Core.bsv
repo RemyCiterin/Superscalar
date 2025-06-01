@@ -15,6 +15,7 @@ import Vector :: *;
 import Connectable :: *;
 import Pipeline :: *;
 import MultiFifo :: *;
+import BranchPred :: *;
 
 import RegFile :: *;
 
@@ -177,6 +178,7 @@ module mkCore(Core);
 
   Reg#(Epoch) epochCounter <- mkReg(0);
   Reg#(Bit#(32)) instructionCounter <- mkReg(0);
+  Reg#(Bit#(32)) misCounter <- mkReg(0);
 
   let registers <- mkRegisterFile;
   Ehr#(2,Bit#(32)) scoreboard <- mkEhr(0);
@@ -237,7 +239,7 @@ module mkCore(Core);
         score[pack(req.rs2)] == 0 &&
         score[pack(req.rd)] == 0;
 
-      if (rdy || req.exception) begin
+      if ((rdy || req.exception) && req.epoch == epoch) begin
         function Vector#(2,Bit#(32)) regRead(void _) =
           vec(registers.read[i].rs1(req.rs1), registers.read[i].rs2(req.rs2));
         let op = mapMicroOp(regRead, req);
@@ -278,8 +280,8 @@ module mkCore(Core);
       end else
         stop = True;
 
-      if (!stop) dispatch.deq[i].fire;
       if (!stop) requests[i] = Valid(req);
+      if (!stop || req.epoch != epoch) dispatch.deq[i].fire;
       if (!stop && !req.exception && req.rd != zeroReg) score[pack(req.rd)] = 1;
       //if (!stop) $display(cycle, " dispatch instruction: ", displayInstr(req.instr));
     end
@@ -302,6 +304,7 @@ module mkCore(Core);
     Bool alu2Ready = alu2.issue.canDeq;
     Bool directReady = directQ.canDeq;
     Bool memReady = dmem.issue.canDeq;
+    Bool trainHit = True;
 
     for (Integer i=0; i < supSize; i = i + 1)
     if (!stop &&& complete.first[i] matches tagged Valid .req) begin
@@ -336,6 +339,11 @@ module mkCore(Core);
         end else stop = True;
       endcase
 
+      if (req.train && req.epoch == epoch) begin
+        if (!trainHit) stop = True;
+        trainHit = False;
+      end
+
       if (!stop) begin
         complete.deq[i].fire;
         if (!req.exception && req.rd != zeroReg) score[pack(req.rd)] = 0;
@@ -348,7 +356,7 @@ module mkCore(Core);
           if (resp.exception) $display("Exception! ", fshow(resp.cause));
           //if (req.exception || resp.exception)
           if (req.tag == DIRECT)
-            $display(cycle, " retire pc: 0x%h instruction: ", req.pc, displayInstr(req.instr));
+            $display(cycle, " ", misCounter, " retire pc: 0x%h instruction: ", req.pc, displayInstr(req.instr));
 
           if (req.tag == DIRECT)
             $display("cycle: %d instret: %d", cycle, counter);
@@ -360,9 +368,25 @@ module mkCore(Core);
 
           if (req.tag != DIRECT && resp.val.nextPc != req.predPc) begin
             //$display(cycle, " redirect to pc: 0x%h counter: %d", resp.val.nextPc, counter);
+            fetch.trainMis(BranchPredTrain{
+              next_pc: resp.val.nextPc,
+              instr: Valid(req.instr),
+              state: req.bstate,
+              pc: req.pc
+            });
             fetch.redirect(resp.val.nextPc, epoch+1);
             epoch = epoch+1;
             stop = True;
+
+            misCounter <= misCounter + 1;
+          end else if (req.tag != DIRECT && req.train) begin
+            fetch.trainHit(BranchPredTrain{
+              next_pc: resp.val.nextPc,
+              instr: Valid(req.instr),
+              state: req.bstate,
+              pc: req.pc
+            });
+            stop=True;
           end
         end
       end
