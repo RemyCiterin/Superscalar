@@ -69,6 +69,7 @@ module mkCache(Cache#(numWay, Bit#(tagW), Bit#(indexW), Bit#(offsetW), `TL_ARGS)
 
   rule evict;
     cache.evict.deq;
+    //$display("evict address: 0x%h", cache.evict.first);
   endrule
 
   rule matching;

@@ -348,11 +348,11 @@ module mkCore(Core);
         complete.deq[i].fire;
         if (!req.exception && req.rd != zeroReg) score[pack(req.rd)] = 0;
 
-        $display(
-          cycle, " %b ", req.epoch == epoch,
-          "retire pc: 0x%h instruction: ", req.pc,
-          displayInstr(req.instr)
-        );
+        //$display(
+        //  cycle, " %b ", req.epoch == epoch,
+        //  "retire pc: 0x%h instruction: ", req.pc,
+        //  displayInstr(req.instr)
+        //);
 
         if (req.epoch == epoch) begin
           counter = counter + 1;
@@ -372,7 +372,7 @@ module mkCore(Core);
           end
 
           if (req.tag != DIRECT && resp.val.nextPc != req.predPc) begin
-            $display(cycle, " redirect to pc: 0x%h counter: %d", resp.val.nextPc, counter);
+            //$display(cycle, " redirect to pc: 0x%h counter: %d", resp.val.nextPc, counter);
             fetch.trainMis(BranchPredTrain{
               next_pc: resp.val.nextPc,
               instr: Valid(req.instr),
