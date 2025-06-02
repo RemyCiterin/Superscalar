@@ -128,18 +128,18 @@ interface RegisterFile;
   interface Super#(WritePort) write;
 endinterface
 
-// A register file with (read < write)
+// A register file with (write < read)
 (* synthesize *)
 module mkRegisterFile(RegisterFile);
-  Vector#(32, Ehr#(SupSize, Bit#(32))) rf <- replicateM(mkEhr(0));
+  Vector#(32, Ehr#(TAdd#(1,SupSize), Bit#(32))) rf <- replicateM(mkEhr(0));
 
   Super#(ReadPort) readIfc = newVector;
   Super#(WritePort) writeIfc = newVector;
 
   for (Integer i=0; i < supSize; i = i + 1) begin
     readIfc[i] = interface ReadPort;
-      method Bit#(32) rs1(ArchReg arch) = rf[pack(arch)][0];
-      method Bit#(32) rs2(ArchReg arch) = rf[pack(arch)][0];
+      method Bit#(32) rs1(ArchReg arch) = rf[pack(arch)][supSize];
+      method Bit#(32) rs2(ArchReg arch) = rf[pack(arch)][supSize];
     endinterface;
 
     writeIfc[i] = interface WritePort;
@@ -176,7 +176,7 @@ endinterface
 module mkCore(Core);
   let fetch <- mkFetchDecode;
 
-  Reg#(Epoch) epochCounter <- mkReg(0);
+  Ehr#(2,Epoch) epochCounter <- mkEhr(0);
   Reg#(Bit#(32)) instructionCounter <- mkReg(0);
   Reg#(Bit#(32)) misCounter <- mkReg(0);
 
@@ -219,8 +219,8 @@ module mkCore(Core);
   rule registerRead;
     Bool stop = False;
 
-    Epoch epoch = epochCounter;
-    Bit#(32) score = scoreboard[0];
+    Epoch epoch = epochCounter[1];
+    Bit#(32) score = scoreboard[1];
     Bool control1Ready = control1.enter.canEnq;
     Bool control2Ready = control2.enter.canEnq;
     Bool alu1Ready = alu1.enter.canEnq;
@@ -287,15 +287,15 @@ module mkCore(Core);
     end
 
     if (Vector::any(isJust,requests)) window.enq(requests);
-    scoreboard[0] <= score;
+    scoreboard[1] <= score;
   endrule
 
   rule retire;
     Bool stop = False;
 
     // Scoreboard screenshot
-    Epoch epoch = epochCounter;
-    Bit#(32) score = scoreboard[1];
+    Epoch epoch = epochCounter[0];
+    Bit#(32) score = scoreboard[0];
     Bit#(32) counter = instructionCounter;
     Bool control1Ready = control1.issue.canDeq;
     Bool control2Ready = control2.issue.canDeq;
@@ -348,7 +348,12 @@ module mkCore(Core);
         complete.deq[i].fire;
         if (!req.exception && req.rd != zeroReg) score[pack(req.rd)] = 0;
 
-        //$display(cycle, " %b ", req.epoch == epoch, "retire pc: 0x%h instruction: ", req.pc, displayInstr(req.instr));
+        $display(
+          cycle, " %b ", req.epoch == epoch,
+          "retire pc: 0x%h instruction: ", req.pc,
+          displayInstr(req.instr)
+        );
+
         if (req.epoch == epoch) begin
           counter = counter + 1;
 
@@ -367,7 +372,7 @@ module mkCore(Core);
           end
 
           if (req.tag != DIRECT && resp.val.nextPc != req.predPc) begin
-            //$display(cycle, " redirect to pc: 0x%h counter: %d", resp.val.nextPc, counter);
+            $display(cycle, " redirect to pc: 0x%h counter: %d", resp.val.nextPc, counter);
             fetch.trainMis(BranchPredTrain{
               next_pc: resp.val.nextPc,
               instr: Valid(req.instr),
@@ -386,14 +391,14 @@ module mkCore(Core);
               state: req.bstate,
               pc: req.pc
             });
-            stop=True;
+            stop = True;
           end
         end
       end
     end
 
-    epochCounter <= epoch;
-    scoreboard[1] <= score;
+    epochCounter[0] <= epoch;
+    scoreboard[0] <= score;
     instructionCounter <= counter;
   endrule
 

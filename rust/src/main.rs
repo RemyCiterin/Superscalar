@@ -70,7 +70,7 @@ fn linked_list_bench() {
     println!("found {} elements in the list", count);
 }
 
-fn vector_bench() {
+pub extern "C" fn vector_bench() -> () {
     let mut list: Vec<u32> = Vec::new();
 
     let size: u32 = 100;

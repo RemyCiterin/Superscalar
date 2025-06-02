@@ -188,7 +188,7 @@ typedef struct {
 instance DefaultValue#(GhtState);
   function defaultValue = GhtState{
     found: False,
-    level: ?,
+    level: 0,
     base: 0,
     pred: 0
   };
@@ -408,7 +408,11 @@ module mkBranchPred(BranchPred);
     let pc = pcQ.first();
 
     match {.branch_pc, .branch_target, .kind} = btb.response();
-    let taken = (ght.prediction() || kind != Branch) && kind != Linear;
+    let taken = case (kind) matches
+      Branch : ght.prediction;
+      Linear : False;
+      default : True;
+    endcase;
 
     let ret_pc <- ras.pred(branch_pc, kind);
     if (ret_pc matches tagged Valid .new_pc) branch_target = new_pc;
@@ -439,12 +443,23 @@ module mkBranchPred(BranchPred);
       let current = basePc + fromInteger(4 * i);
       ret.next[i] = current == branch_pc && taken ? branch_target : current + 4;
       ret.mask[i] = current >= pc && (!taken || branch_pc >= current);
-      ret.needTrainHit[i] = pc == branch_pc && kind != Linear;
+      ret.needTrainHit[i] = current == branch_pc && kind != Linear;
       ret.current[i] = current;
 
-      ret.state[i].state = pc == branch_pc && kind != Linear ? ght.state : defaultValue;
-      ret.state[i].kind = pc == branch_pc && kind != Linear ? kind : Linear;
+      ret.state[i].state = current == branch_pc && kind != Linear ? ght.state : defaultValue;
+      ret.state[i].kind = current == branch_pc && kind != Linear ? kind : Linear;
     end
+
+    //$display("\nBlock 0x%h:", basePc);
+    //$display("\tnext block: 0x%h", ret.pc);
+    //for (Integer i=0; i < supSize; i = i + 1) if (ret.mask[i]) begin
+    //  $display("\tIndex %d", i);
+    //  $display("\t\tpc: 0x%h", ret.current[i]);
+    //  $display("\t\tpred: 0x%h", ret.next[i]);
+    //  $display("\t\ttrain at hit: ", ret.needTrainHit[i] ? "true" : "false");
+    //  $display("\t\tght state: ", fshow(ret.state[i].state));
+    //  $display("\t\tinstr kind: ", fshow(ret.state[i].kind));
+    //end
 
     return ret;
   endmethod

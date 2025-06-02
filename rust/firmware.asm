@@ -20,7 +20,7 @@ Disassembly of section .text:
 
 80000020 <.Lpcrel_hi2>:
 80000020:	0000f117          	auipc	sp,0xf
-80000024:	fd010113          	addi	sp,sp,-48 # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.2275959410562074681>
+80000024:	fd010113          	addi	sp,sp,-48 # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.14295172549478879016>
 80000028:	470000ef          	jal	80000498 <kernel_main>
 
 8000002c <.infinite_loop>:
@@ -610,7 +610,7 @@ Disassembly of section .text:
 800008d8:	00000493          	li	s1,0
 800008dc:	00000d93          	li	s11,0
 800008e0:	8000f537          	lui	a0,0x8000f
-800008e4:	fe052823          	sw	zero,-16(a0) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.2275959410562074681>
+800008e4:	fe052823          	sw	zero,-16(a0) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.14295172549478879016>
 800008e8:	ff050513          	addi	a0,a0,-16
 800008ec:	00368593          	addi	a1,a3,3
 800008f0:	ffc5f593          	andi	a1,a1,-4
@@ -754,7 +754,7 @@ Disassembly of section .text:
 80000b18:	09012583          	lw	a1,144(sp)
 80000b1c:	00269693          	slli	a3,a3,0x2
 80000b20:	8000f437          	lui	s0,0x8000f
-80000b24:	ff040513          	addi	a0,s0,-16 # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.2275959410562074681>
+80000b24:	ff040513          	addi	a0,s0,-16 # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.14295172549478879016>
 80000b28:	00450513          	addi	a0,a0,4
 80000b2c:	00400613          	li	a2,4
 80000b30:	00001097          	auipc	ra,0x1
@@ -1556,7 +1556,7 @@ Disassembly of section .text:
 80001798:	34051263          	bnez	a0,80001adc <_ZN7SuperOS9user_main17hdb789cef18ee1961E+0xc88>
 8000179c:	03012903          	lw	s2,48(sp)
 800017a0:	8000f537          	lui	a0,0x8000f
-800017a4:	ff050493          	addi	s1,a0,-16 # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.2275959410562074681>
+800017a4:	ff050493          	addi	s1,a0,-16 # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.14295172549478879016>
 800017a8:	04090863          	beqz	s2,800017f8 <_ZN7SuperOS9user_main17hdb789cef18ee1961E+0x9a4>
 800017ac:	02c12b83          	lw	s7,44(sp)
 800017b0:	004b8b93          	addi	s7,s7,4
@@ -1573,7 +1573,7 @@ Disassembly of section .text:
 800017dc:	00001097          	auipc	ra,0x1
 800017e0:	920080e7          	jalr	-1760(ra) # 800020fc <_ZN7SuperOS4hole8HoleList10deallocate17h97ba67f80e05da93E>
 800017e4:	8000f637          	lui	a2,0x8000f
-800017e8:	ff062503          	lw	a0,-16(a2) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.2275959410562074681>
+800017e8:	ff062503          	lw	a0,-16(a2) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.14295172549478879016>
 800017ec:	40b50533          	sub	a0,a0,a1
 800017f0:	fea62823          	sw	a0,-16(a2)
 800017f4:	fc5ff06f          	j	800017b8 <_ZN7SuperOS9user_main17hdb789cef18ee1961E+0x964>
@@ -1589,7 +1589,7 @@ Disassembly of section .text:
 8000181c:	00001097          	auipc	ra,0x1
 80001820:	8e0080e7          	jalr	-1824(ra) # 800020fc <_ZN7SuperOS4hole8HoleList10deallocate17h97ba67f80e05da93E>
 80001824:	8000f637          	lui	a2,0x8000f
-80001828:	ff062503          	lw	a0,-16(a2) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.2275959410562074681>
+80001828:	ff062503          	lw	a0,-16(a2) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.14295172549478879016>
 8000182c:	40b50533          	sub	a0,a0,a1
 80001830:	fea62823          	sw	a0,-16(a2)
 80001834:	02412903          	lw	s2,36(sp)
@@ -1609,7 +1609,7 @@ Disassembly of section .text:
 8000186c:	00001097          	auipc	ra,0x1
 80001870:	890080e7          	jalr	-1904(ra) # 800020fc <_ZN7SuperOS4hole8HoleList10deallocate17h97ba67f80e05da93E>
 80001874:	8000f637          	lui	a2,0x8000f
-80001878:	ff062503          	lw	a0,-16(a2) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.2275959410562074681>
+80001878:	ff062503          	lw	a0,-16(a2) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.14295172549478879016>
 8000187c:	40b50533          	sub	a0,a0,a1
 80001880:	fea62823          	sw	a0,-16(a2)
 80001884:	fc5ff06f          	j	80001848 <_ZN7SuperOS9user_main17hdb789cef18ee1961E+0x9f4>
@@ -1625,7 +1625,7 @@ Disassembly of section .text:
 800018ac:	00001097          	auipc	ra,0x1
 800018b0:	850080e7          	jalr	-1968(ra) # 800020fc <_ZN7SuperOS4hole8HoleList10deallocate17h97ba67f80e05da93E>
 800018b4:	8000f637          	lui	a2,0x8000f
-800018b8:	ff062503          	lw	a0,-16(a2) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.2275959410562074681>
+800018b8:	ff062503          	lw	a0,-16(a2) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.14295172549478879016>
 800018bc:	40b50533          	sub	a0,a0,a1
 800018c0:	fea62823          	sw	a0,-16(a2)
 800018c4:	01812903          	lw	s2,24(sp)
@@ -1645,7 +1645,7 @@ Disassembly of section .text:
 800018fc:	00001097          	auipc	ra,0x1
 80001900:	800080e7          	jalr	-2048(ra) # 800020fc <_ZN7SuperOS4hole8HoleList10deallocate17h97ba67f80e05da93E>
 80001904:	8000f637          	lui	a2,0x8000f
-80001908:	ff062503          	lw	a0,-16(a2) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.2275959410562074681>
+80001908:	ff062503          	lw	a0,-16(a2) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.14295172549478879016>
 8000190c:	40b50533          	sub	a0,a0,a1
 80001910:	fea62823          	sw	a0,-16(a2)
 80001914:	fc5ff06f          	j	800018d8 <_ZN7SuperOS9user_main17hdb789cef18ee1961E+0xa84>
@@ -1661,7 +1661,7 @@ Disassembly of section .text:
 8000193c:	00000097          	auipc	ra,0x0
 80001940:	7c0080e7          	jalr	1984(ra) # 800020fc <_ZN7SuperOS4hole8HoleList10deallocate17h97ba67f80e05da93E>
 80001944:	8000f637          	lui	a2,0x8000f
-80001948:	ff062503          	lw	a0,-16(a2) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.2275959410562074681>
+80001948:	ff062503          	lw	a0,-16(a2) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.14295172549478879016>
 8000194c:	40b50533          	sub	a0,a0,a1
 80001950:	fea62823          	sw	a0,-16(a2)
 80001954:	b0002573          	.insn	4, 0xb0002573
@@ -1834,7 +1834,7 @@ Disassembly of section .text:
 80001bd8:	08098663          	beqz	s3,80001c64 <_ZN5alloc7raw_vec11finish_grow17h182efa19389c14adE+0xc4>
 80001bdc:	00062a03          	lw	s4,0(a2)
 80001be0:	8000f5b7          	lui	a1,0x8000f
-80001be4:	ff458593          	addi	a1,a1,-12 # 8000eff4 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.2275959410562074681+0x4>
+80001be4:	ff458593          	addi	a1,a1,-12 # 8000eff4 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.14295172549478879016+0x4>
 80001be8:	00410513          	addi	a0,sp,4
 80001bec:	00400613          	li	a2,4
 80001bf0:	00048693          	mv	a3,s1
@@ -1844,7 +1844,7 @@ Disassembly of section .text:
 80001c00:	0a050c63          	beqz	a0,80001cb8 <_ZN5alloc7raw_vec11finish_grow17h182efa19389c14adE+0x118>
 80001c04:	00c12503          	lw	a0,12(sp)
 80001c08:	8000fab7          	lui	s5,0x8000f
-80001c0c:	ff0aa583          	lw	a1,-16(s5) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.2275959410562074681>
+80001c0c:	ff0aa583          	lw	a1,-16(s5) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.14295172549478879016>
 80001c10:	00412903          	lw	s2,4(sp)
 80001c14:	ff0a8b13          	addi	s6,s5,-16
 80001c18:	00a58533          	add	a0,a1,a0
@@ -1870,7 +1870,7 @@ Disassembly of section .text:
 80001c68:	8000e537          	lui	a0,0x8000e
 80001c6c:	fee54003          	lbu	zero,-18(a0) # 8000dfee <__rust_no_alloc_shim_is_unstable>
 80001c70:	8000f5b7          	lui	a1,0x8000f
-80001c74:	ff458593          	addi	a1,a1,-12 # 8000eff4 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.2275959410562074681+0x4>
+80001c74:	ff458593          	addi	a1,a1,-12 # 8000eff4 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.14295172549478879016+0x4>
 80001c78:	00410513          	addi	a0,sp,4
 80001c7c:	00400613          	li	a2,4
 80001c80:	00048693          	mv	a3,s1
@@ -1880,7 +1880,7 @@ Disassembly of section .text:
 80001c90:	02050463          	beqz	a0,80001cb8 <_ZN5alloc7raw_vec11finish_grow17h182efa19389c14adE+0x118>
 80001c94:	00c12503          	lw	a0,12(sp)
 80001c98:	8000f5b7          	lui	a1,0x8000f
-80001c9c:	ff05a603          	lw	a2,-16(a1) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.2275959410562074681>
+80001c9c:	ff05a603          	lw	a2,-16(a1) # 8000eff0 <_ZN7SuperOS6kalloc16KERNEL_ALLOCATOR17hfe4bb1a5821a8c85E.llvm.14295172549478879016>
 80001ca0:	00412903          	lw	s2,4(sp)
 80001ca4:	00a60533          	add	a0,a2,a0
 80001ca8:	fea5a823          	sw	a0,-16(a1)
