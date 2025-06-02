@@ -53,7 +53,7 @@ module mkCache(Cache#(numWay, Bit#(tagW), Bit#(indexW), Bit#(offsetW), `TL_ARGS)
   Fifo#(1, CacheOp#(dataW)) opQ <- mkPipelineFifo;
 
   // Load response queue
-  Fifo#(2, Bit#(dataW)) ldResponseQ <- mkFifo;
+  Fifo#(2, Bit#(dataW)) ldResponseQ <- mkBypassFifo;
 
   // Store response queue
   Fifo#(2, Bit#(dataW)) stResponseQ <- mkFifo;

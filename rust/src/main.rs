@@ -98,7 +98,7 @@ pub extern "C" fn vector_bench() -> () {
 
 
 fn matmul_bench() {
-    let size: usize = 5;
+    let size: usize = 10;
     let mut v1 : Vec<Vec<f32>> = Vec::new();
     let mut v2 : Vec<Vec<f32>> = Vec::new();
     let mut v3 : Vec<Vec<f32>> = Vec::new();
@@ -135,9 +135,6 @@ fn matmul_bench() {
     }
 
     println!("sum: {} expected: {}", sum, size*size*size*(size-1)*(size-1) / 4);
-
-
-
 }
 
 // BTree are implemented using a linear search with a comparison instead of
@@ -146,7 +143,7 @@ fn matmul_bench() {
 fn btree_bench() {
     let mut list: BTreeSet<u32> = BTreeSet::new();
 
-    let size: u32 = 1000;
+    let size: u32 = 100;
 
     for i in 0..size {
         list.insert(i);
@@ -159,7 +156,7 @@ fn btree_bench() {
             //for x in list.iter() {
             //    if x == &i {count += 1;}
             //}
-            if count % 100 == 0 {
+            if count % 10 == 0 {
                 println!("found {} elements in the list", count);
             }
 
@@ -192,7 +189,7 @@ unsafe extern "C" fn kernel_main(_hartid: usize, _dtb: usize) -> () {
     println!("kernel allocator initialised!");
 
     asm!("fence");
-    vector_bench();
+    matmul_bench();
     asm!("fence");
 
     trap::init();

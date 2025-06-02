@@ -16,6 +16,7 @@ import Connectable :: *;
 import Pipeline :: *;
 import MultiFifo :: *;
 import BranchPred :: *;
+import LSU :: *;
 
 import RegFile :: *;
 
@@ -187,7 +188,8 @@ module mkCore(Core);
 
   ExecPort control1 <- mkControl;
   ExecPort control2 <- mkControl;
-  DMEM_IFC dmem <- mkDMem;
+  //DMEM_IFC dmem <- mkDMem;
+  let dmem <- mkLoadStoreUnit;
   ExecPort alu1 <- mkAlu;
   ExecPort alu2 <- mkAlu;
 
@@ -348,11 +350,11 @@ module mkCore(Core);
         complete.deq[i].fire;
         if (!req.exception && req.rd != zeroReg) score[pack(req.rd)] = 0;
 
-        //$display(
-        //  cycle, " %b ", req.epoch == epoch,
-        //  "retire pc: 0x%h instruction: ", req.pc,
-        //  displayInstr(req.instr)
-        //);
+        $display(
+          cycle, " %b ", req.epoch == epoch,
+          "retire pc: 0x%h instruction: ", req.pc,
+          displayInstr(req.instr)
+        );
 
         if (req.epoch == epoch) begin
           counter = counter + 1;
@@ -361,7 +363,7 @@ module mkCore(Core);
           if (resp.exception) $display("Exception! ", fshow(resp.cause));
           //if (req.exception || resp.exception)
           if (req.tag == DIRECT)
-            $display(cycle, " ", misCounter, " retire pc: 0x%h instruction: ", req.pc, displayInstr(req.instr));
+            $display(cycle," ",misCounter," retire pc: 0x%h instruction: ",req.pc,displayInstr(req.instr));
 
           if (req.tag == DIRECT)
             $display("cycle: %d instret: %d", cycle, counter);
