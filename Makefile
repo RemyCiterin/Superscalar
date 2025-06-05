@@ -38,6 +38,9 @@ test:
 	riscv32-none-elf-objdump ./rust/target/riscv32i-unknown-none-elf/release/SuperOS -D \
 		> rust/firmware.asm
 
+test_coremark:
+	elf_to_hex/elf_to_hex ./coremark.bare.riscv Mem.hex
+
 compile:
 	bsc \
 		$(SYNTH_FLAGS) $(BSC_FLAGS) -cpp +RTS -K128M -RTS \

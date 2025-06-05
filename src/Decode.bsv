@@ -554,14 +554,14 @@ function Maybe#(ROp) decodeRtype(Rtype instr);
       {7'b0000000, 3'b110} : Valid(OR);   // or
       {7'b0000000, 3'b111} : Valid(AND);  // and
 
-      // {7'b0000001, 3'b000} : Valid(MUL);
-      // {7'b0000001, 3'b001} : Valid(MULH);
-      // {7'b0000001, 3'b010} : Valid(MULHSU);
-      // {7'b0000001, 3'b011} : Valid(MULHU);
-      // {7'b0000001, 3'b100} : Valid(DIV);
-      // {7'b0000001, 3'b101} : Valid(DIVU);
-      // {7'b0000001, 3'b110} : Valid(REM);
-      // {7'b0000001, 3'b111} : Valid(REMU);
+      {7'b0000001, 3'b000} : Valid(MUL);
+      {7'b0000001, 3'b001} : Valid(MULH);
+      {7'b0000001, 3'b010} : Valid(MULHSU);
+      {7'b0000001, 3'b011} : Valid(MULHU);
+      {7'b0000001, 3'b100} : Valid(DIV);
+      {7'b0000001, 3'b101} : Valid(DIVU);
+      {7'b0000001, 3'b110} : Valid(REM);
+      {7'b0000001, 3'b111} : Valid(REMU);
       default : Invalid;
     endcase;
 endfunction

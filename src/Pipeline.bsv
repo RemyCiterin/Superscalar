@@ -11,6 +11,7 @@ import CSR :: *;
 import ALU :: *;
 import ControlFlow :: *;
 import Vector :: *;
+import MulDiv :: *;
 
 import Cache :: *;
 import TLTypes :: *;
@@ -32,6 +33,117 @@ module mkAlu(ExecPort);
     method canDeq = inQ.canDeq;
     method deq = inQ.deq;
   endinterface;
+endmodule
+
+(* synthesize *)
+module mkAluWithMulDiv(ExecPort);
+  Fifo#(4, Bit#(2)) kindQ <- mkFifo;
+  let mul <- mkMulServer;
+  let div <- mkDivServer;
+  let alu <- mkAlu;
+
+  function Bool canDeq;
+    if (kindQ.canDeq && alu.issue.canDeq)
+      return case (kindQ.first) matches
+        2 : div.response.canDeq;
+        1 : mul.response.canDeq;
+        0 : True;
+      endcase;
+    else
+      return False;
+  endfunction
+
+  interface FifoI enter;
+    method Bool canEnq = alu.enter.canEnq && mul.request.canEnq && div.request.canEnq;
+    method Action enq(ExecInput entry);
+      alu.enter.enq(entry);
+
+      case (entry.instr) matches
+        tagged Rtype {op: MUL} : begin
+          mul.request.enq(MulRequest{
+            x1: entry.val[0], x2: entry.val[1],
+            x1Signed: True, x2Signed: True, high: False
+          });
+          kindQ.enq(1);
+        end
+        tagged Rtype {op: MULH} : begin
+          mul.request.enq(MulRequest{
+            x1: entry.val[0], x2: entry.val[1],
+            x1Signed: True, x2Signed: True, high: True
+          });
+          kindQ.enq(1);
+        end
+        tagged Rtype {op: MULHSU} : begin
+          mul.request.enq(MulRequest{
+            x1: entry.val[0], x2: entry.val[1],
+            x1Signed: True, x2Signed: False, high: True
+          });
+          kindQ.enq(1);
+        end
+        tagged Rtype {op: MULHU} : begin
+          mul.request.enq(MulRequest{
+            x1: entry.val[0], x2: entry.val[1],
+            x1Signed: False, x2Signed: False, high: True
+          });
+          kindQ.enq(1);
+        end
+        tagged Rtype {op: DIV} : begin
+          div.request.enq(DivRequest{
+            x1: entry.val[0], x2: entry.val[1],
+            isSigned: True, rem: False
+          });
+          kindQ.enq(2);
+        end
+        tagged Rtype {op: DIVU} : begin
+          div.request.enq(DivRequest{
+            x1: entry.val[0], x2: entry.val[1],
+            isSigned: False, rem: False
+          });
+          kindQ.enq(2);
+        end
+        tagged Rtype {op: REM} : begin
+          div.request.enq(DivRequest{
+            x1: entry.val[0], x2: entry.val[1],
+            isSigned: True, rem: True
+          });
+          kindQ.enq(2);
+        end
+        tagged Rtype {op: REMU} : begin
+          div.request.enq(DivRequest{
+            x1: entry.val[0], x2: entry.val[1],
+            isSigned: False, rem: True
+          });
+          kindQ.enq(2);
+        end
+        default: kindQ.enq(0);
+      endcase
+    endmethod
+  endinterface
+
+  interface FifoO issue;
+    method Bool canDeq = canDeq;
+
+    method first if (canDeq);
+      ExecOutput ret = alu.issue.first;
+
+      case (kindQ.first) matches
+        1 : ret.val.rdVal = mul.response.first;
+        2 : ret.val.rdVal = div.response.first;
+      endcase
+
+      return ret;
+    endmethod
+
+    method Action deq;
+      alu.issue.deq;
+      kindQ.deq;
+
+      case (kindQ.first) matches
+        1 : mul.response.deq;
+        2 : div.response.deq;
+      endcase
+    endmethod
+  endinterface
 endmodule
 
 (* synthesize *)

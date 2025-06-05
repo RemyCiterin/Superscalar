@@ -14,9 +14,9 @@ import Fifo :: *;
 import Vector :: *;
 import Connectable :: *;
 import Pipeline :: *;
-import MultiFifo :: *;
 import BranchPred :: *;
 import LSU :: *;
+import MulDiv :: *;
 
 import RegFile :: *;
 
@@ -39,37 +39,32 @@ endinterface
 
 (* synthesize *)
 module mkDispatchBuffer(DispatchBuffer);
-  Super#(Reg#(MicroOp#(void))) buffer <- replicateM(mkReg(?));
-  Super#(Ehr#(2, Bool)) valid <- replicateM(mkEhr(False));
-
+  Super#(Ehr#(2, Maybe#(MicroOp#(void)))) buffer <- replicateM(mkEhr(Invalid));
   Super#(Fire) deqIfc = newVector;
+
+  Super#(Reg#(Maybe#(MicroOp#(void)))) deqBuf = transpose(buffer)[1];
+  Super#(Reg#(Maybe#(MicroOp#(void)))) enqBuf = transpose(buffer)[0];
 
   Bool blocked = True;
   for (Integer i=0; i < supSize; i = i + 1) begin
-    if (valid[i][0]) blocked = False;
+    if (deqBuf[i] matches tagged Valid .*) blocked = False;
   end
 
   for (Integer i=0; i < supSize; i = i + 1) begin
     deqIfc[i] = interface Fire;
-      method Action fire if (!blocked && valid[i][0]);
-        valid[i][0] <= False;
+      method Action fire if (!blocked &&& deqBuf[i] matches tagged Valid .*);
+        deqBuf[i] <= Invalid;
       endmethod
     endinterface;
   end
 
   Bool canEnq = True;
   for (Integer i=0; i < supSize ; i = i + 1) begin
-    canEnq = canEnq && !valid[i][1];
+    if (enqBuf[i] matches tagged Valid .*) canEnq = False;
   end
 
   method first if (!blocked);
-    Super#(Maybe#(MicroOp#(void))) ret = newVector;
-
-    for (Integer i=0; i < supSize; i = i + 1) begin
-      ret[i] = valid[i][0] ? Valid(buffer[i]) : Invalid;
-    end
-
-    return ret;
+    return readVReg(deqBuf);
   endmethod
 
   interface deq = deqIfc;
@@ -78,41 +73,10 @@ module mkDispatchBuffer(DispatchBuffer);
     method canEnq = canEnq;
     method Action enq(Super#(Maybe#(MicroOp#(void))) entry) if (canEnq);
       for (Integer i=0; i < supSize; i = i + 1) begin
-        valid[i][1] <= entry[i] != Invalid;
-        buffer[i] <= unJust(entry[i]);
+        enqBuf[i] <= entry[i];
       end
     endmethod
   endinterface;
-endmodule
-
-// A fifo with N enqueue interfaces and one dequeue interface
-module mkMultiInputFifo(Tuple2#(Vector#(ports, FifoI#(t)), FifoO#(t))) provisos(Bits#(t,tW));
-  Fifo#(1, t) outQ <- mkBypassFifo;
-
-  Ehr#(TAdd#(ports,1), Maybe#(t)) buffer <- mkEhr(Invalid);
-
-  rule connect if (buffer[0] matches tagged Valid .x);
-    buffer[0] <= Invalid;
-    outQ.enq(x);
-  endrule
-
-  Tuple2#(Vector#(ports, FifoI#(t)), FifoO#(t)) ifc = tuple2(?, toFifoO(outQ));
-
-  for (Integer i=0; i < valueof(ports); i = i + 1) begin
-    Bool canEnq = case (buffer[i+1]) matches
-      Invalid : True;
-      default : False;
-    endcase;
-
-    ifc.fst[i] = interface FifoI;
-      method Bool canEnq = canEnq;
-      method Action enq(t x) if (canEnq);
-        buffer[i+1] <= Valid(x);
-      endmethod
-    endinterface;
-  end
-
-  return ifc;
 endmodule
 
 interface ReadPort;
@@ -190,8 +154,8 @@ module mkCore(Core);
   ExecPort control2 <- mkControl;
   //DMEM_IFC dmem <- mkDMem;
   let dmem <- mkLoadStoreUnit;
-  ExecPort alu1 <- mkAlu;
-  ExecPort alu2 <- mkAlu;
+  ExecPort alu1 <- mkAluWithMulDiv;
+  ExecPort alu2 <- mkAluWithMulDiv;
 
   Fifo#(16, Super#(Maybe#(MicroOp#(void)))) window <- mkFifo;
   // Ensure that we dispatch instructions in order
@@ -348,7 +312,8 @@ module mkCore(Core);
 
       if (!stop) begin
         complete.deq[i].fire;
-        if (!req.exception && req.rd != zeroReg) score[pack(req.rd)] = 0;
+        //if (!req.exception && req.rd != zeroReg) score[pack(req.rd)] = 0;
+        if (req.rd != zeroReg) score[pack(req.rd)] = 0;
 
         //$display(
         //  cycle, " %b ", req.epoch == epoch,
@@ -368,10 +333,11 @@ module mkCore(Core);
           if (req.tag == DIRECT)
             $display("cycle: %d instret: %d", cycle, counter);
 
-          if (!req.exception && !resp.exception && req.tag != DIRECT) begin
-            //if (req.rd != zeroReg) $display("  ", fshow(req.rd), " <= 0x%h", resp.val.rdVal);
+          if (req.tag == DIRECT)
+            resp.val.rdVal = cycle;
+
+          if (!req.exception && !resp.exception) //&& req.tag != DIRECT)
             registers.write[i].rd(req.rd, resp.val.rdVal);
-          end
 
           if (req.tag != DIRECT && resp.val.nextPc != req.predPc) begin
             //$display(cycle, " redirect to pc: 0x%h counter: %d", resp.val.nextPc, counter);
