@@ -46,10 +46,10 @@ typedef enum {
 (* synthesize *)
 module mkLoadStoreUnit(LoadStoreUnit);
   Fifo#(2, ExecInput) inQ <- mkFifo;
-  Fifo#(16, Bool) kindQ <- mkFifo;
-  Fifo#(2, ExecOutput) outStoreQ <- mkFifo;
-  Fifo#(2, ExecOutput) outLoadQ <- mkFifo;
-  Fifo#(1, Bool) commitQ <- mkBypassFifo;
+  Fifo#(16, Bool) kindQ <- mkBypassFifo;
+  Fifo#(2, ExecOutput) outStoreQ <- mkBypassFifo;
+  Fifo#(2, ExecOutput) outLoadQ <- mkBypassFifo;
+  Fifo#(2, Bool) commitQ <- mkFifo;
   Fifo#(16, LsuTag) tagQ <- mkFifo;
 
   Reg#(Bit#(32)) cycle <- mkReg(0);
@@ -163,10 +163,8 @@ module mkLoadStoreUnit(LoadStoreUnit);
 
   rule commitStore if (tagQ.first matches Store);
     if (commitQ.first && storeQueue.first.addr != 32'h10000000) begin
-      storeQueue.deq;
-
-      opQ.enq(False);
       storeBuffer.enq(?);
+      opQ.enq(False);
 
       cache.send(storeQueue.first.addr, tagged BCache::Store{
         data: storeQueue.first.data,
@@ -179,11 +177,10 @@ module mkLoadStoreUnit(LoadStoreUnit);
           else $write("%c", storeQueue.first.data[7:0]);
         end
       end
-
-      stores[1] <= stores[1] - 1;
-      storeQueue.deq;
     end
 
+    stores[1] <= stores[1] - 1;
+    storeQueue.deq;
     commitQ.deq;
     tagQ.deq;
   endrule
@@ -195,7 +192,7 @@ module mkLoadStoreUnit(LoadStoreUnit);
 
   rule storeResponse if (!opQ.first);
     let _ <- cache.receive;
-    stores[0] <= stores[0] - 1;
+    //stores[0] <= stores[0] - 1;
     storeBuffer.deq;
     opQ.deq;
   endrule

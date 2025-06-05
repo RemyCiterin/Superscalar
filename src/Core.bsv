@@ -39,11 +39,37 @@ endinterface
 
 (* synthesize *)
 module mkDispatchBuffer(DispatchBuffer);
-  Super#(Ehr#(2, Maybe#(MicroOp#(void)))) buffer <- replicateM(mkEhr(Invalid));
+  Vector#(TMul#(2,SupSize), Ehr#(3, Maybe#(MicroOp#(void)))) buffer <- replicateM(mkEhr(Invalid));
   Super#(Fire) deqIfc = newVector;
 
-  Super#(Reg#(Maybe#(MicroOp#(void)))) deqBuf = transpose(buffer)[1];
-  Super#(Reg#(Maybe#(MicroOp#(void)))) enqBuf = transpose(buffer)[0];
+  Super#(Reg#(Maybe#(MicroOp#(void)))) deqBuf = take(transpose(buffer)[2]);
+  Super#(Reg#(Maybe#(MicroOp#(void)))) enqBuf = drop(transpose(buffer)[0]);
+
+  (* fire_when_enabled, no_implicit_conditions *)
+  rule canon;
+    Integer k=0;
+    Integer port = 1;
+    Bit#(TMul#(2,SupSize)) mask = 0;
+    for (Integer i=0; i < 2*supSize; i = i + 1) begin
+      Bool found = False;
+
+      for (Integer j=i; j < 2*supSize; j = j + 1) if (j >= k && !found) begin
+        if (buffer[j][port] matches tagged Valid .*) begin
+          found = True;
+          k = j;
+        end
+      end
+
+      if (found) buffer[i][port] <= buffer[k][port];
+      if (found) mask[k] = 1;
+      if (found) mask[i] = 0;
+      k = k + 1;
+    end
+
+    for (Integer i=0; i < 2*supSize; i = i + 1) begin
+      if (mask[i] == 1) buffer[i][port] <= Invalid;
+    end
+  endrule
 
   Bool blocked = True;
   for (Integer i=0; i < supSize; i = i + 1) begin
@@ -69,14 +95,14 @@ module mkDispatchBuffer(DispatchBuffer);
 
   interface deq = deqIfc;
 
-  interface enter = interface FifoI;
+  interface FifoI enter;
     method canEnq = canEnq;
     method Action enq(Super#(Maybe#(MicroOp#(void))) entry) if (canEnq);
       for (Integer i=0; i < supSize; i = i + 1) begin
         enqBuf[i] <= entry[i];
       end
     endmethod
-  endinterface;
+  endinterface
 endmodule
 
 interface ReadPort;
