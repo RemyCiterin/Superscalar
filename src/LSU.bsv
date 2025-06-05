@@ -46,7 +46,7 @@ typedef enum {
 (* synthesize *)
 module mkLoadStoreUnit(LoadStoreUnit);
   Fifo#(2, ExecInput) inQ <- mkFifo;
-  Fifo#(2, Bool) kindQ <- mkFifo;
+  Fifo#(16, Bool) kindQ <- mkFifo;
   Fifo#(2, ExecOutput) outStoreQ <- mkFifo;
   Fifo#(2, ExecOutput) outLoadQ <- mkFifo;
   Fifo#(1, Bool) commitQ <- mkBypassFifo;
@@ -190,7 +190,7 @@ module mkLoadStoreUnit(LoadStoreUnit);
 
   interface FifoO issue;
     method first = kindQ.first ? outLoadQ.first : outStoreQ.first;
-    method canDeq = kindQ.first ? outLoadQ.canDeq : outStoreQ.canDeq;
+    method canDeq = kindQ.canDeq ? (kindQ.first ? outLoadQ.canDeq : outStoreQ.canDeq) : False;
     method Action deq;
       kindQ.deq;
 

@@ -17,6 +17,7 @@ import Pipeline :: *;
 import MultiFifo :: *;
 import BranchPred :: *;
 import LSU :: *;
+import IssueQueue :: *;
 
 import RegFile :: *;
 
@@ -44,6 +45,7 @@ module mkDispatchBuffer(DispatchBuffer);
 
   Super#(Fire) deqIfc = newVector;
 
+  //Bool blocked = False;
   Bool blocked = True;
   for (Integer i=0; i < supSize; i = i + 1) begin
     if (valid[i][0]) blocked = False;
@@ -115,6 +117,7 @@ module mkMultiInputFifo(Tuple2#(Vector#(ports, FifoI#(t)), FifoO#(t))) provisos(
   return ifc;
 endmodule
 
+typedef 6 NumReadPort;
 interface ReadPort;
   method Bit#(32) rs1(ArchReg arch);
   method Bit#(32) rs2(ArchReg arch);
@@ -125,7 +128,7 @@ interface WritePort;
 endinterface
 
 interface RegisterFile;
-  interface Super#(ReadPort) read;
+  interface Vector#(NumReadPort, ReadPort) read;
   interface Super#(WritePort) write;
 endinterface
 
@@ -134,15 +137,17 @@ endinterface
 module mkRegisterFile(RegisterFile);
   Vector#(32, Ehr#(TAdd#(1,SupSize), Bit#(32))) rf <- replicateM(mkEhr(0));
 
-  Super#(ReadPort) readIfc = newVector;
+  Vector#(NumReadPort, ReadPort) readIfc = newVector;
   Super#(WritePort) writeIfc = newVector;
 
-  for (Integer i=0; i < supSize; i = i + 1) begin
+  for (Integer i=0; i < valueof(NumReadPort); i = i + 1) begin
     readIfc[i] = interface ReadPort;
-      method Bit#(32) rs1(ArchReg arch) = rf[pack(arch)][supSize];
-      method Bit#(32) rs2(ArchReg arch) = rf[pack(arch)][supSize];
+      method Bit#(32) rs1(ArchReg arch) = rf[pack(arch)][0];
+      method Bit#(32) rs2(ArchReg arch) = rf[pack(arch)][0];
     endinterface;
+  end
 
+  for (Integer i=0; i < supSize; i = i + 1) begin
     writeIfc[i] = interface WritePort;
       method Action rd(ArchReg arch, Bit#(32) val);
         if (arch != zeroReg) rf[pack(arch)][i] <= val;
@@ -184,7 +189,7 @@ module mkCore(Core);
   let registers <- mkRegisterFile;
   Ehr#(2,Bit#(32)) scoreboard <- mkEhr(0);
 
-  Fifo#(2, ExecInput) directQ <- mkFifo;
+  Fifo#(2, MicroOp#(void)) directQ <- mkFifo;
 
   ExecPort control1 <- mkControl;
   ExecPort control2 <- mkControl;
@@ -193,7 +198,55 @@ module mkCore(Core);
   ExecPort alu1 <- mkAlu;
   ExecPort alu2 <- mkAlu;
 
-  Fifo#(8, Super#(Maybe#(MicroOp#(void)))) window <- mkFifo;
+  let controlIq1 <- mkDefaultIq;
+  let controlIq2 <- mkDefaultIq;
+  let dmemIq <- mkDefaultIq;
+  let aluIq1 <- mkDefaultIq;
+  let aluIq2 <- mkDefaultIq;
+
+  function Action wakeup(ArchReg arch, Integer port);
+    action
+      controlIq1.wakeup[port].write(arch);
+      controlIq2.wakeup[port].write(arch);
+      dmemIq.wakeup[port].write(arch);
+      aluIq1.wakeup[port].write(arch);
+      aluIq2.wakeup[port].write(arch);
+    endaction
+  endfunction
+
+  function ExecInput readRegs(MicroOp#(void) op, Integer port);
+    return mapMicroOp(
+      constFn(vec(registers.read[port].rs1(op.rs1), registers.read[port].rs2(op.rs2))),
+      op
+    );
+  endfunction
+
+  rule connectControl1;
+    controlIq1.issue.deq;
+    control1.enter.enq(readRegs(controlIq1.issue.first, 0));
+  endrule
+
+  rule connectControl2;
+    controlIq2.issue.deq;
+    control2.enter.enq(readRegs(controlIq2.issue.first, 1));
+  endrule
+
+  rule connectAlu1;
+    aluIq1.issue.deq;
+    alu1.enter.enq(readRegs(aluIq1.issue.first, 2));
+  endrule
+
+  rule connectAlu2;
+    aluIq2.issue.deq;
+    alu2.enter.enq(readRegs(aluIq2.issue.first, 3));
+  endrule
+
+  rule connectDmem2;
+    dmemIq.issue.deq;
+    dmem.enter.enq(readRegs(dmemIq.issue.first, 4));
+  endrule
+
+  Fifo#(16, Super#(Maybe#(MicroOp#(void)))) window <- mkFifo;
   // Ensure that we dispatch instructions in order
   DispatchBuffer dispatch <- mkDispatchBuffer;
   // Ensure that we complete instructions in order
@@ -223,12 +276,12 @@ module mkCore(Core);
 
     Epoch epoch = epochCounter[1];
     Bit#(32) score = scoreboard[1];
-    Bool control1Ready = control1.enter.canEnq;
-    Bool control2Ready = control2.enter.canEnq;
-    Bool alu1Ready = alu1.enter.canEnq;
-    Bool alu2Ready = alu2.enter.canEnq;
+    Bool control1Ready = controlIq1.enter.canEnq;
+    Bool control2Ready = controlIq2.enter.canEnq;
+    Bool alu1Ready = aluIq1.enter.canEnq;
+    Bool alu2Ready = aluIq2.enter.canEnq;
+    Bool memReady = dmemIq.enter.canEnq;
     Bool directReady = directQ.canEnq;
-    Bool memReady = dmem.enter.canEnq;
 
     Super#(Maybe#(MicroOp#(void))) requests = replicate(Invalid);
 
@@ -236,47 +289,43 @@ module mkCore(Core);
     if (!stop &&& dispatch.first[i] matches tagged Valid .request_) begin
       MicroOp#(void) req = request_;
 
-      let rdy =
-        score[pack(req.rs1)] == 0 &&
-        score[pack(req.rs2)] == 0 &&
-        score[pack(req.rd)] == 0;
+      // Ensure we never have two instructions writing in the same
+      // register in the pipeline
+      let rdy = score[pack(req.rd)] == 0;
 
       if ((rdy || req.exception) && req.epoch == epoch) begin
-        function Vector#(2,Bit#(32)) regRead(void _) =
-          vec(registers.read[i].rs1(req.rs1), registers.read[i].rs2(req.rs2));
-        let op = mapMicroOp(regRead, req);
-
-        //$display("read ", fshow(req.rs1), " = 0x%h and ", regRead(?)[0],
-        //  fshow(req.rs2), " = 0x%h", regRead(?)[1]);
+        function Vector#(2,Bool) regReady(void _) =
+          vec(score[pack(req.rs1)] == 0, score[pack(req.rs2)] == 0);
+        let op = mapMicroOp(regReady, req);
 
         case (req.tag) matches
           CONTROL : if (control1Ready) begin
-            control1.enter.enq(op);
+            controlIq1.enter.enq(op);
             control1Ready = False;
             req.pipeline = 0;
           end else if (control2Ready) begin
-            control2.enter.enq(op);
+            controlIq2.enter.enq(op);
             control2Ready = False;
             req.pipeline = 1;
           end else stop = True;
           DIRECT : if (directReady) begin
             directReady = False;
             req.pipeline = 2;
-            directQ.enq(op);
+            directQ.enq(req);
           end else stop = True;
           DMEM : if (memReady) begin
-            dmem.enter.enq(op);
+            dmemIq.enter.enq(op);
             memReady = False;
             req.pipeline = 3;
           end else stop = True;
           EXEC : if (alu1Ready) begin
             req.pipeline = 4;
             alu1Ready = False;
-            alu1.enter.enq(op);
+            aluIq1.enter.enq(op);
           end else if (alu2Ready) begin
             req.pipeline = 5;
             alu2Ready = False;
-            alu2.enter.enq(op);
+            aluIq2.enter.enq(op);
           end else stop = True;
         endcase
       end else
@@ -292,6 +341,7 @@ module mkCore(Core);
     scoreboard[1] <= score;
   endrule
 
+  (* fire_when_enabled, no_implicit_conditions *)
   rule retire;
     Bool stop = False;
 
@@ -348,13 +398,16 @@ module mkCore(Core);
 
       if (!stop) begin
         complete.deq[i].fire;
-        if (!req.exception && req.rd != zeroReg) score[pack(req.rd)] = 0;
+        if (!req.exception && req.rd != zeroReg) begin
+          score[pack(req.rd)] = 0;
+          wakeup(req.rd, i);
+        end
 
-        $display(
-          cycle, " %b ", req.epoch == epoch,
-          "retire pc: 0x%h instruction: ", req.pc,
-          displayInstr(req.instr)
-        );
+        //$display(
+        //  cycle, " %b ", req.epoch == epoch,
+        //  "retire pc: 0x%h instruction: ", req.pc,
+        //  displayInstr(req.instr)
+        //);
 
         if (req.epoch == epoch) begin
           counter = counter + 1;
@@ -363,7 +416,11 @@ module mkCore(Core);
           if (resp.exception) $display("Exception! ", fshow(resp.cause));
           //if (req.exception || resp.exception)
           if (req.tag == DIRECT)
-            $display(cycle," ",misCounter," retire pc: 0x%h instruction: ",req.pc,displayInstr(req.instr));
+            $display(
+              cycle, " ", misCounter,
+              " retire pc: 0x%h instruction: ",
+              req.pc,displayInstr(req.instr)
+            );
 
           if (req.tag == DIRECT)
             $display("cycle: %d instret: %d", cycle, counter);
