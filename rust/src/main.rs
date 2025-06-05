@@ -35,6 +35,7 @@ use crate::trap::*;
 use riscv::register::{mstatus, mie, minstret, mcycle};
 
 global_asm!(include_str!("init.s"));
+global_asm!(include_str!("bench.S"));
 global_asm!(include_str!("trampoline.s"));
 
 use alloc::vec::Vec;
@@ -43,6 +44,8 @@ use alloc::collections::BTreeSet;
 use alloc::boxed::Box;
 
 use crate::pointer::PhysAddr;
+
+extern "C" {pub fn load_banwidth_bench() -> ();}
 
 fn linked_list_bench() {
     let mut list: LinkedList<u32> = LinkedList::new();
@@ -188,9 +191,16 @@ unsafe extern "C" fn kernel_main(_hartid: usize, _dtb: usize) -> () {
     kalloc::init();
     println!("kernel allocator initialised!");
 
+    load_banwidth_bench();
+    load_banwidth_bench();
+
     asm!("fence");
     matmul_bench();
     asm!("fence");
+
+    unsafe {
+        core::ptr::write_volatile(constant::UART_BASE as *mut u8, 0);
+    }
 
     trap::init();
 

@@ -193,7 +193,7 @@ module mkCore(Core);
   ExecPort alu1 <- mkAlu;
   ExecPort alu2 <- mkAlu;
 
-  Fifo#(8, Super#(Maybe#(MicroOp#(void)))) window <- mkFifo;
+  Fifo#(16, Super#(Maybe#(MicroOp#(void)))) window <- mkFifo;
   // Ensure that we dispatch instructions in order
   DispatchBuffer dispatch <- mkDispatchBuffer;
   // Ensure that we complete instructions in order
@@ -350,11 +350,11 @@ module mkCore(Core);
         complete.deq[i].fire;
         if (!req.exception && req.rd != zeroReg) score[pack(req.rd)] = 0;
 
-        $display(
-          cycle, " %b ", req.epoch == epoch,
-          "retire pc: 0x%h instruction: ", req.pc,
-          displayInstr(req.instr)
-        );
+        //$display(
+        //  cycle, " %b ", req.epoch == epoch,
+        //  "retire pc: 0x%h instruction: ", req.pc,
+        //  displayInstr(req.instr)
+        //);
 
         if (req.epoch == epoch) begin
           counter = counter + 1;

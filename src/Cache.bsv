@@ -56,16 +56,16 @@ module mkCache(Cache#(numWay, Bit#(tagW), Bit#(indexW), Bit#(offsetW), `TL_ARGS)
   Fifo#(2, Bit#(dataW)) ldResponseQ <- mkBypassFifo;
 
   // Store response queue
-  Fifo#(2, Bit#(dataW)) stResponseQ <- mkFifo;
+  Fifo#(2, Bit#(dataW)) stResponseQ <- mkBypassFifo;
 
   // store conditional response queue
-  Fifo#(2, Bit#(dataW)) scResponseQ <- mkFifo;
+  Fifo#(2, Bit#(dataW)) scResponseQ <- mkBypassFifo;
 
   // nop response queue
-  Fifo#(2, Bit#(dataW)) noResponseQ <- mkFifo;
+  Fifo#(2, Bit#(dataW)) noResponseQ <- mkBypassFifo;
 
   // Kind of operation (load, store, store conditional)
-  Fifo#(8, Bit#(2)) kindQ <- mkFifo;
+  Fifo#(16, Bit#(2)) kindQ <- mkFifo;
 
   rule evict;
     cache.evict.deq;
