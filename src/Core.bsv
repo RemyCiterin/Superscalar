@@ -341,7 +341,7 @@ module mkCore(Core);
     scoreboard[1] <= score;
   endrule
 
-  (* fire_when_enabled, no_implicit_conditions *)
+  (* fire_when_enabled *)
   rule retire;
     Bool stop = False;
 

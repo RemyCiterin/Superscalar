@@ -71,6 +71,7 @@ module mkLoadStoreUnit(LoadStoreUnit);
 
   Fifo#(8, Bool) opQ <- mkFifo;
 
+  (* preempts = "commitStore, startLoad" *)
   rule startLoad if (stores[0] == 0 && isLoad(inQ.first.instr));
     let addr = inQ.first.val[0] + immediateBits(inQ.first.instr);
     cache.send(addr & ~32'b11, BCache::Load);
@@ -152,29 +153,34 @@ module mkLoadStoreUnit(LoadStoreUnit);
     inQ.deq;
   endrule
 
-  rule commitRl;
-    case (tagQ.first) matches
-      Store : if (commitQ.first && storeQueue.first.addr != 32'h10000000) begin
-        storeQueue.deq;
+  rule commitStore if (tagQ.first matches Store);
+    if (commitQ.first && storeQueue.first.addr != 32'h10000000) begin
+      storeQueue.deq;
 
-        opQ.enq(False);
-        storeBuffer.enq(?);
+      opQ.enq(False);
+      storeBuffer.enq(?);
 
-        cache.send(storeQueue.first.addr, tagged BCache::Store{
-          data: storeQueue.first.data,
-          mask: storeQueue.first.mask
-        });
-      end else begin
-        if (commitQ.first && storeQueue.first.addr == 32'h10000000) begin
-          if (storeQueue.first.mask[0] == 1) $write("%c", storeQueue.first.data[7:0]);
+      cache.send(storeQueue.first.addr, tagged BCache::Store{
+        data: storeQueue.first.data,
+        mask: storeQueue.first.mask
+      });
+    end else begin
+      if (commitQ.first && storeQueue.first.addr == 32'h10000000) begin
+        if (storeQueue.first.mask[0] == 1) begin
+          if (storeQueue.first.data[7:0] == 0) $finish;
+          else $write("%c", storeQueue.first.data[7:0]);
         end
-
-        stores[1] <= stores[1] - 1;
-        storeQueue.deq;
       end
-      default : noAction;
-    endcase
 
+      stores[1] <= stores[1] - 1;
+      storeQueue.deq;
+    end
+
+    commitQ.deq;
+    tagQ.deq;
+  endrule
+
+  rule commitOther if (tagQ.first != Store);
     commitQ.deq;
     tagQ.deq;
   endrule
