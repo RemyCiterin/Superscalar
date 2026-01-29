@@ -1,0 +1,17 @@
+`define TL_ARGS_DECL numeric type addrW, \
+                     numeric type dataW, \
+                     numeric type sizeW, \
+                     numeric type sourceW, \
+                     numeric type sinkW
+
+`define TL_ARGS addrW, \
+                dataW, \
+                sizeW, \
+                sourceW, \
+                sinkW
+
+`define TL_ARGS_DEFAULT 32, \
+                        32, \
+                        3, \
+                        2, \
+                        2

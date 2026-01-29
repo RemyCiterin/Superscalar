@@ -1,10 +1,11 @@
-import ClientServer :: *;
-import GetPut :: *;
-import Fifo :: *;
-
-import Decode :: *;
-import Utils :: *;
 import Ehr :: *;
+
+export MulRequest(..);
+export DivRequest(..);
+export MulServer(..);
+export DivServer(..);
+export mkMulServer;
+export mkDivServer;
 
 typedef struct {
   Bit#(32) x1;
@@ -22,29 +23,33 @@ typedef struct {
 } DivRequest deriving(Bits, FShow, Eq);
 
 interface MulServer;
-  interface FifoI#(MulRequest) request;
-  interface FifoO#(Bit#(32)) response;
+  (* always_ready *) method Action enter(MulRequest req);
+  (* always_ready *) method Bit#(32) response;
+  (* always_ready *) method Bool valid;
 endinterface
 
 interface DivServer;
-  interface FifoI#(DivRequest) request;
-  interface FifoO#(Bit#(32)) response;
+  (* always_ready *) method Action enter(DivRequest req);
+  (* always_ready *) method Bit#(32) response;
+  (* always_ready *) method Bool valid;
 endinterface
 
 interface Multiplier;
-  interface FifoI#(Tuple2#(Bit#(64),Bit#(64))) request;
-  interface FifoO#(Bit#(64)) response;
+  (* always_ready *) method Action enter(Bit#(64) lhs, Bit#(64) rhs);
+  (* always_ready *) method Bit#(64) response;
+  (* always_ready *) method Bool valid;
 endinterface
 
-// Slow but very small multiplier
+// Slow but very small multiplier, perform 4 multiplcation steps per cycle
+(* synthesize *)
 module mkMultiplier(Multiplier);
   Reg#(Bit#(64)) status <- mkReg(0);
-  Reg#(Bool) busy <- mkReg(False);
+  Reg#(Bool) used <- mkReg(False);
   Reg#(Bit#(64)) acc <- mkReg(0);
   Reg#(Bit#(64)) lhs <- mkReg(?);
   Reg#(Bit#(64)) rhs <- mkReg(?);
 
-  rule step if (busy && status != 0);
+  rule step if (status != 0);
     acc <= acc +
       (rhs[0] == 1 ? lhs : 0) +
       (rhs[1] == 1 ? lhs << 1 : 0) +
@@ -55,77 +60,42 @@ module mkMultiplier(Multiplier);
     lhs <= lhs << 4;
   endrule
 
-  interface FifoI request;
-    method canEnq = !busy;
-    method Action enq(Tuple2#(Bit#(64),Bit#(64)) req) if (!busy);
-      action
-        lhs <= req.fst;
-        rhs <= req.snd;
-        busy <= True;
-        status <= 1;
-        acc <= 0;
-      endaction
-    endmethod
-  endinterface
+  method Action enter(Bit#(64) l, Bit#(64) r);
+    used <= True;
+    status <= 1;
+    lhs <= l;
+    rhs <= r;
+    acc <= 0;
+  endmethod
 
-  interface FifoO response;
-    method canDeq = busy && status == 0;
-    method first if (busy && status == 0) = acc;
-
-    method Action deq if (busy && status == 0);
-      busy <= False;
-    endmethod
-  endinterface
+  method Bool valid = used && status == 0;
+  method Bit#(64) response = acc;
 endmodule
 
+(* synthesize *)
 module mkMulServer(MulServer);
+  Reg#(Bool) used <- mkReg(False);
+  Reg#(MulRequest) req <- mkRegU;
   Bool fastMul = True;
 
-  Fifo#(2, MulRequest) requests <- mkFifo;
-
-  Fifo#(2, Bool) highQ <- mkFifo;
   Multiplier server <- mkMultiplier;
 
-  if (!fastMul) rule start_mul;
-    let req = requests.first;
-    requests.deq;
+  method Action enter(MulRequest r);
+    Bit#(64) x1 = r.x1Signed ? signExtend(r.x1) : zeroExtend(r.x1);
+    Bit#(64) x2 = r.x2Signed ? signExtend(r.x2) : zeroExtend(r.x2);
+    if (!fastMul) server.enter(x1, x2);
+    used <= True;
+    req <= r;
+  endmethod
 
-    Bit#(64) x1 = (req.x1Signed ? signExtend(req.x1) : zeroExtend(req.x1));
-    Bit#(64) x2 = (req.x2Signed ? signExtend(req.x2) : zeroExtend(req.x2));
-    highQ.enq(req.high);
+  method Bool valid = used && (fastMul || server.valid);
 
-    server.request.enq(tuple2(x1,x2));
-  endrule
-
-  method request = toFifoI(requests);
-
-  interface FifoO response;
-    method canDeq = fastMul ? requests.canDeq : server.response.canDeq;
-    method Bit#(32) first if ((fastMul ? requests.canDeq : server.response.canDeq));
-      if (fastMul) begin
-        let req = requests.first;
-
-        Bit#(64) x1 = (req.x1Signed ? signExtend(req.x1) : zeroExtend(req.x1));
-        Bit#(64) x2 = (req.x2Signed ? signExtend(req.x2) : zeroExtend(req.x2));
-        Bit#(64) ret = x1 * x2;
-
-        return req.high ? ret[63:32] : ret[31:0];
-      end else begin
-        let high = highQ.first;
-
-        let ret = server.response.first;
-        return high ? ret[63:32] : ret[31:0];
-      end
-    endmethod
-
-    method Action deq;
-      if (fastMul) requests.deq;
-      else begin
-        server.response.deq;
-        highQ.deq;
-      end
-    endmethod
-  endinterface
+  method Bit#(32) response;
+    Bit#(64) x1 = req.x1Signed ? signExtend(req.x1) : zeroExtend(req.x1);
+    Bit#(64) x2 = req.x2Signed ? signExtend(req.x2) : zeroExtend(req.x2);
+    Bit#(64) ret = fastMul ? x1 * x2 : server.response;
+    return req.high ? ret[63:32] : ret[31:0];
+  endmethod
 endmodule
 
 // Represent an intermediate state
@@ -164,16 +134,13 @@ endfunction
 
 typedef 34 DivideSize;
 
-typedef union tagged {
-  void Overflow;
-  void Zero;
-  void Idle;
-  DivideUState#(DivideSize) Busy;
-} DivideState deriving(Bits, FShow, Eq);
-
+(* synthesize *)
 module mkDivServer(DivServer);
-  Ehr#(2, DivideState) state <- mkEhr(Idle);
-  Fifo#(2, DivRequest) requests <- mkFifo;
+  Reg#(DivideUState#(DivideSize)) state <- mkRegU;
+  Reg#(Bool) used <- mkReg(False);
+  Reg#(Bool) isOverflow <- mkRegU;
+  Reg#(DivRequest) req <- mkRegU;
+  Reg#(Bool) isZero <- mkRegU;
 
   // Let return Q, R such that
   // N = Q * D + R with sign(R) = sign(N) and 0 <= |R| < |D|
@@ -193,18 +160,7 @@ module mkDivServer(DivServer);
   //   with -N > 0, -D > 0 and N < 0
   // So we compute q, r = divMod(-N, -D) and return (q, -r)
 
-  function Bool getIsReady;
-    return case (state[0]) matches
-      Zero : True;
-      Overflow : True;
-      tagged Busy .st : st.index == 0;
-      default: False;
-    endcase;
-  endfunction
-
-  rule step if (state[0] matches tagged Busy .st &&& st.index != 0);
-    let req = requests.first;
-
+  rule step if (state.index != 0);
     Bit#(DivideSize) n = (req.isSigned ? signExtend(req.x1) : zeroExtend(req.x1));
     Bit#(DivideSize) d = (req.isSigned ? signExtend(req.x2) : zeroExtend(req.x2));
     Int#(DivideSize) n_int = unpack(n);
@@ -213,56 +169,39 @@ module mkDivServer(DivServer);
     n = req.isSigned && n_int < 0 ? -n : n;
     d = req.isSigned && d_int < 0 ? -d : d;
 
-    state[0] <= tagged Busy divideStep(n, d, st);
+    state <= divideStep(n, d, state);
   endrule
 
-  interface FifoI request;
-    method canEnq = state[1] == Idle && requests.canEnq;
-    method Action enq(DivRequest req) if (state[1] matches Idle);
+  method Action enter(DivRequest r);
+    isOverflow <= r.x1 == -(1 << 31) && r.x2 == -1 && r.isSigned;
+    state <= divideInit;
+    isZero <= r.x2 == 0;
+    used <= True;
+    req <= r;
+  endmethod
 
-      if (req.x2 == 0)
-        state[1] <= Zero;
-      else if (req.x1 == -(1 << 31) && req.x2 == -1 && req.isSigned)
-        state[1] <= Overflow;
-      else
-        state[1] <= tagged Busy divideInit;
+  method Bit#(32) response;
+    Bit#(DivideSize) n = (req.isSigned ? signExtend(req.x1) : zeroExtend(req.x1));
+    Bit#(DivideSize) d = (req.isSigned ? signExtend(req.x2) : zeroExtend(req.x2));
+    Int#(DivideSize) n_int = unpack(n);
+    Int#(DivideSize) d_int = unpack(d);
 
-      requests.enq(req);
-    endmethod
-  endinterface
+    if (isZero) return req.rem ? 0 : -1;
+    else if (isOverflow) return req.rem ? 0 : req.x1;
+    else begin
+      if (req.rem) begin
+        if (req.isSigned && n_int < 0)
+          return -truncate(state.rem);
+        else
+          return truncate(state.rem);
+      end else begin
+        if (req.isSigned && ((n_int < 0) != (d_int < 0)))
+          return -truncate(state.div);
+        else
+          return truncate(state.div);
+      end
+    end
+  endmethod
 
-  interface FifoO response;
-    method Bool canDeq = getIsReady && requests.canDeq;
-    method Bit#(32) first if (getIsReady && requests.canDeq);
-      let req = requests.first;
-      Bit#(DivideSize) n = (req.isSigned ? signExtend(req.x1) : zeroExtend(req.x1));
-      Bit#(DivideSize) d = (req.isSigned ? signExtend(req.x2) : zeroExtend(req.x2));
-      Int#(DivideSize) n_int = unpack(n);
-      Int#(DivideSize) d_int = unpack(d);
-
-      case (state[0]) matches
-        tagged Busy .st : begin
-          if (req.rem) begin
-            if (req.isSigned && n_int < 0)
-              return -truncate(st.rem);
-            else
-              return truncate(st.rem);
-          end else begin
-            if (req.isSigned && ((n_int < 0) != (d_int < 0)))
-              return -truncate(st.div);
-            else
-              return truncate(st.div);
-          end
-        end
-        Overflow : return req.rem ? 0 : req.x1;
-        Zero : return req.rem ? 0 : -1;
-        default: return ?;
-      endcase
-    endmethod
-
-    method Action deq if (getIsReady);
-      state[0] <= Idle;
-      requests.deq;
-    endmethod
-  endinterface
+  method Bool valid = used && (isZero || isOverflow || state.index == 0);
 endmodule

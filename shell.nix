@@ -14,29 +14,25 @@ in
 
 pkgs.mkShell {
   buildInputs = [
-    pkgs.libelf
+    # RTL simulation
     pkgs.bluespec
     pkgs.verilator
     pkgs.verilog
     pkgs.gtkwave
-    pkgs.openfpgaloader
-    pkgs.pkgsCross.riscv32-embedded.buildPackages.gcc
-    #pkgsCross.buildPackages.binutils
-    #pkgsCross.buildPackages.gcc
-    #pkgs.sail-riscv-rv64
-    pkgs.qemu
 
+    # Some tools for FPGA implementation
     pkgs.yosys
     pkgs.nextpnr
     pkgs.trellis
-    #pkgs.icestorm
+    pkgs.icestorm
+    pkgs.python313Packages.apycula
+    pkgsCross.buildPackages.gcc
+    pkgs.openfpgaloader
 
-    pkgs.graphviz
+    pkgs.zig_0_12
 
-    pkgs.fujprog
-
-    pkgs.python312Packages.matplotlib
-    pkgs.python312Packages.numpy
+    # View dot files
+    pkgs.xdot
   ];
 
   shellHook = ''

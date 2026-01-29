@@ -1,106 +1,128 @@
-import TLTypes :: *;
+import BRAMCore::*;
+import RegFile::*;
+import RvInstr::*;
+import RvAlu::*;
+import UART::*;
 
-import BlockRam :: *;
-import BRAMCore :: *;
-import TLBram :: *;
-
-import BCache :: *;
-import TLXBar :: *;
-
-import Ehr :: *;
-import Fifo :: *;
-
-import Decode :: *;
-import Utils :: *;
-
-import MicroOp :: *;
 import Fetch :: *;
+import BranchPred::*;
 
-import ControlFlow :: *;
-import ALU :: *;
-import Core :: *;
+import MulDiv :: *;
 
-import Memory :: *;
-import CompletionBuffer :: *;
-import GetPut :: *;
+interface MainIfc;
+  (* always_ready, always_enabled *)
+  method Bit#(8) led;
 
-import Cache :: *;
+  (* always_ready, always_enabled *)
+  method Bit#(1) transmit;
+endinterface
 
-import Connectable :: *;
+module mkSoc(MainIfc);
+  let cpu <- mkCPU();
+  method transmit = cpu.transmit;
 
-import TLBroadcast :: *;
+  //Bool debug = False;
 
-import Vector :: *;
-import BuildVector :: *;
+  //TxUART txUart <- mkTxUART(25_000_000 / 115200);
 
-typedef 32 AddrW;
-typedef 32 DataW;
-typedef 8 SizeW;
-typedef 8 SourceW;
-typedef 8 SinkW;
+  //Reg#(Bit#(32)) cycle <- mkReg(0);
+  //rule incr_cycle; cycle <= cycle+1; endrule
 
-module mkRom(TLSlave#(AddrW,DataW,SizeW,SourceW,0));
-  BRAM_DUAL_PORT_BE#(Bit#(AddrW), Bit#(DataW), TDiv#(DataW,8)) rom <-
-    mkBRAMCore2BELoad(1024 * 1024 * 33, False, "Mem.hex", False);
+  //RegFile#(Bit#(5), Bit#(32)) counters <- mkRegFileFull;
 
-  BramBE#(Bit#(AddrW), DataW) bram <- wrapBramBE(rom);
+  ////rule dump_counters if (cycle[16:0] < 23);
+  ////  $display("op ", fshow(Operation'(unpack(cycle[4:0]))), ": ", counters.sub(cycle[4:0]));
+  ////endrule
 
-  TLSlave#(AddrW,DataW,SizeW,SourceW,0) ifc <- mkTLBram(32'h80000000, 1024*1024*33, bram);
-  return ifc;
-endmodule
+  //let maxAddr = 32*1024;
 
-module mkUart(TLSlave#(AddrW,DataW,SizeW,SourceW,SinkW));
-  Fifo#(1, void) fifo <- mkPipelineFifo;
+  //Reg#(Bit#(8)) state <- mkReg(-1);
+  //Reg#(Bit#(32)) pc <- mkReg('h80000000);
 
-  BramBE#(Bit#(AddrW), DataW) bram = interface BramBE;
-    method Action read(_) = fifo.enq(?);
-    method Bool canRead = fifo.canEnq;
-    method Bool canDeq = fifo.canDeq;
-    method Action deq = fifo.deq;
-    method response = ?;
+  //Reg#(RvInstr) instr <- mkReg(?);
 
-    method Action write(Bit#(AddrW) addr, Bit#(DataW) data, Bit#(TDiv#(DataW,8)) mask);
-      if (addr == 32'h10000000 && mask[0] == 1)
-        $write("%c", data[7:0]);
-    endmethod
-  endinterface;
+  //BRAM_PORT_BE#(Bit#(30), Bit#(32), 4) bram <-
+  //  mkBRAMCore1BELoad(maxAddr, False, "Mem.hex", False);
 
-  TLSlave#(AddrW,DataW,SizeW,SourceW,SinkW) ifc <- mkTLBram(32'h10000000, 4096, bram);
-  return ifc;
-endmodule
+  //RegFile#(ArchReg, Bit#(32)) rf <- mkRegFileFull;
+  //Reg#(ArchReg) initReg <- mkReg(0);
 
-module mkSoc(Empty);
-  let rom <- mkRom;
-  let core <- mkCore;
-
-  function Bit#(1) rootSource(Bit#(SourceW) source) = source == 0 ? 0 : 1;
-  function Bit#(0) rootSink(Bit#(SinkW) sink) = 0;
-  function Bit#(0) rootAddr(Bit#(AddrW) addr) = 0;
-
-  XBar#(1, 2, 32, 32, 8, 8, 8) xbar <-
-    mkXBar(XBarConf{rootSource: rootSource, rootSink: rootSink, rootAddr: rootAddr, bce: True});
-
-  // For each source, return the source managing the probe requests of that source
-  function Bit#(sourceW) repr(Bit#(sourceW) source) = source;
-
-  TLBroadcast#(AddrW,DataW,SizeW,SourceW,SinkW) broadcast <- mkTLBroadcast(TLBroadcastConf{
-    mshr: 4,
-    sink: 0,
-    logSize: 6, // cache blocks are 16 bytes
-    sources: vec(0,1),
-    repr: repr
-  });
-
-  mkConnection(broadcast.coherent, xbar.masters[0]);
-
-  mkDecreaseWidth(True, core.imaster, xbar.slaves[0]);
-  //mkConnection(core.imaster, xbar.slaves[0]);
-
-  //rule display_imaster if (core.imaster.channelA.canDeq);
-  //  $display("imaster: 0x%h", core.imaster.channelA.first.address);
+  //rule init if (state == -1);
+  //  rf.upd(initReg, 0);
+  //  counters.upd(initReg, 0);
+  //  initReg <= initReg + 1;
+  //  if (initReg+1 == 0) state <= 0;
   //endrule
 
-  mkConnection(xbar.slaves[1], core.dmaster);
+  //rule fetch if (state == 0);
+  //  if (debug) $write("pc: %h   ", pc);
+  //  bram.put(0, (pc-'h80000000)[31:2], ?);
+  //  state <= 1;
+  //endrule
 
-  mkConnection(broadcast.uncoherent, rom);
+  //rule decode if (state == 1);
+  //  instr <= decodeRvInstr(bram.read);
+  //  state <= 2;
+
+  //  let ins = decodeRvInstr(bram.read);
+  //  counters.upd(pack(ins.opcode), counters.sub(pack(ins.opcode))+1);
+  //endrule
+
+  //let aluReq = AluRequest{
+  //  instr: instr,
+  //  rs1: rf.sub(instr.rs1),
+  //  rs2: rf.sub(instr.rs2),
+  //  pc: pc
+  //};
+
+  //let lsuReq = getLsuRequest(aluReq);
+  //let address = (lsuReq.address - 'h80000000)[31:2];
+  ////address = address < maxAddr ? address : 0;
+
+  //rule exec if (state == 2 && instr.opcode != Load && instr.opcode != Store);
+  //  if (debug) $display("exec ", showRvInstr(instr));
+  //  let resp = execAlu(aluReq);
+
+  //  if (debug) $display("    ", showReg(instr.rd), " := %h", resp.rd);
+  //  if (instr.rd != archZero) rf.upd(instr.rd, resp.rd);
+  //  pc <= resp.pc;
+  //  state <= 0;
+  //endrule
+
+  //rule store if (state == 2 && instr.opcode == Store);
+  //  if (debug) $display("exec ", showRvInstr(instr));
+  //  let mask = lsuRequestMask(lsuReq);
+  //  let data = lsuRequestData(lsuReq);
+  //  //bram.put(mask, address, data);
+  //  if (address < maxAddr) bram.put(mask, address, data);
+  //  if (debug) $display("    mem[%h] = %h when %b", lsuReq.address, data, mask);
+
+  //  if (lsuReq.address == 'h10000000 && mask[0] == 1) begin
+  //    //$write("%c", data[7:0]);
+  //    txUart.put(data[7:0]);
+  //  end
+
+  //  pc <= pc + 4;
+  //  state <= 0;
+  //endrule
+
+  //rule loadReq if (state == 2 && instr.opcode == Load);
+  //  bram.put(0, address, ?);
+  //  state <= 3;
+  //endrule
+
+  //rule loadResp if (state == 3);
+  //  if (debug) $display("exec ", showRvInstr(instr));
+  //  if (debug) $write("    mem[%h] : ", lsuReq.address);
+  //  if (debug) $display(showReg(instr.rd), " := %h", lsuRequestRd(lsuReq, bram.read));
+  //  if (instr.rd != archZero) rf.upd(instr.rd, lsuRequestRd(lsuReq, bram.read));
+  //  pc <= pc + 4;
+  //  state <= 0;
+  //endrule
+
+  //method led = state;
+endmodule
+
+module mkSocSim(Empty);
+  MainIfc main <- mkSoc;
 endmodule

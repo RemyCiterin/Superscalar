@@ -3,4 +3,7 @@ build
 rtl
 elf_to_hex
 rust/target
-Mem.hex
+Mem*.hex
+soft/zig-cache
+soft/zig-out
+soft/firmware.asm
