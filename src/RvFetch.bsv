@@ -147,11 +147,11 @@ typedef struct {
   Super#(Bool) exception;
   Super#(Bit#(32)) pc;
   Epoch epoch;
-} DecodeOutput deriving(Bits);
+} Bundle deriving(Bits);
 
 interface DecodeIfc;
   method Action put(FetchOutput in);
-  method ActionValue#(DecodeOutput) get;
+  method ActionValue#(Bundle) get;
   (* always_ready *) method Bool canGet;
 endinterface
 
@@ -165,7 +165,7 @@ module mkDecode(DecodeIfc);
 
   method canGet = fifo.canDeq;
 
-  method ActionValue#(DecodeOutput) get;
+  method ActionValue#(Bundle) get;
     let in = fifo.first;
     fifo.deq;
 
@@ -180,7 +180,7 @@ module mkDecode(DecodeIfc);
       end
     end
 
-    return DecodeOutput{
+    return Bundle{
       bprediction: in.bprediction,
       exception: exception,
       bstate: in.bstate,

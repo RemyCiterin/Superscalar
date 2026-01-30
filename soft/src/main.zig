@@ -62,6 +62,37 @@ pub fn panic(
     hang();
 }
 
+pub inline fn custom_insn0(
+    comptime rd: []const u8,
+    comptime rs1: []const u8,
+    comptime rs2: []const u8,
+) void {
+    if (rd[0] != 'v') @compileError("Invalid destination register");
+    if (rs1[0] != 'v') @compileError("Invalid source register");
+    if (rs2[0] != 'v') @compileError("Invalid source register");
+
+    asm volatile (".insn r CUSTOM_0, 0x0, 0x0, x" ++ rd[1..] ++
+            ", x" ++ rs1[1..] ++
+            ", x" ++ rs2[1..]);
+}
+
+pub inline fn custom_insn1(
+    comptime rs1: []const u8,
+    comptime rs2: []const u8,
+) usize {
+    var x: usize = undefined;
+    if (rs1[0] != 'v') @compileError("Invalid source register");
+    if (rs2[0] != 'v') @compileError("Invalid source register");
+
+    asm volatile (".insn r CUSTOM_0, 0x0, 0x1, %[dest]" ++
+            ", x" ++ rs1[1..] ++
+            ", x" ++ rs2[1..]
+        : [dest] "=r" (x),
+    );
+
+    return x;
+}
+
 var kalloc: Allocator = undefined;
 
 pub export fn kernel_main() align(16) callconv(.C) void {
@@ -101,6 +132,9 @@ pub export fn kernel_main() align(16) callconv(.C) void {
 
         UART.writer.print("\n", .{}) catch unreachable;
     }
+
+    custom_insn0("v0", "v1", "v2");
+    _ = custom_insn1("v0", "v1");
 
     while (true) {}
 

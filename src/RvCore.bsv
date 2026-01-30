@@ -13,7 +13,7 @@ import Ehr :: *;
 
 interface DispatchBuffer;
   // Give the current values inside the buffer
-  (* always_ready *) method DecodeOutput _read;
+  (* always_ready *) method Bundle _read;
 
   // consume some values of the buffer, the values that we consumes mue be coherents:
   // if `0 <= a < b < supSize` are two indexes such that `self.mask[a] and self.mask[b]`, then we
@@ -21,7 +21,7 @@ interface DispatchBuffer;
   method Action consume(Super#(Bool) mask);
 
   // Read some values from the decode stage, only called if the fetch buffer is empty
-  method Action put(DecodeOutput in);
+  method Action put(Bundle in);
 endinterface
 
 (* synthesize *)
@@ -35,7 +35,7 @@ module mkDispatchBuffer(DispatchBuffer);
   Reg#(Super#(Bit#(32))) pcBuf <- mkReg(?);
   Reg#(Epoch) epochBuf <- mkReg(?);
 
-  method _read = DecodeOutput{
+  method _read = Bundle{
     bprediction: bpredictionBuf,
     exception: exceptionBuf,
     bstate: bstateBuf,
@@ -59,7 +59,7 @@ module mkDispatchBuffer(DispatchBuffer);
     mask[0] <= newMask;
   endmethod
 
-  method Action put(DecodeOutput in) if (mask[1] == replicate(False));
+  method Action put(Bundle in) if (mask[1] == replicate(False));
     bpredictionBuf <= in.bprediction;
     exceptionBuf <= in.exception;
     bstateBuf <= in.bstate;
@@ -138,7 +138,7 @@ module mkCPU(CpuIfc);
 
   Reg#(Bit#(32)) commitPc <- mkReg('h80000000);
 
-  rule commit if (outBuffer.mask != replicate(False));
+  rule commit if (outBuffer.mask != replicate(False) && !redirectQ.canDeq);
     Bool stop = False;
     Bool useMem = False;
     Bool trainHit = True;
@@ -192,7 +192,7 @@ module mkCPU(CpuIfc);
 
         if (outBuffer.exception[i]) $display("cycle: %d instret: %d", cycle, instret);
 
-        // Apply ALU operation
+        // Apply Store operation
         if (!outBuffer.exception[i] && instr.opcode == Store) begin
           let address = (lsuReq.address - 'h80000000) >> 2;
           let data = lsuRequestData(lsuReq);
@@ -323,7 +323,7 @@ module mkCPU(CpuIfc);
 
     scoreboard[1] <= score;
     inBuffer.consume(consumed);
-    outBuffer.put(DecodeOutput{
+    outBuffer.put(Bundle{
       bprediction: inBuffer.bprediction,
       exception: inBuffer.exception,
       bstate: inBuffer.bstate,
