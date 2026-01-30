@@ -4,7 +4,6 @@ import RegFile :: *;
 import FIFOF :: *;
 import Vector :: *;
 import GetPut :: *;
-import Ehr :: *;
 
 interface Fifo#(numeric type n, type t);
   method Action enq(t value);
@@ -168,10 +167,10 @@ endfunction
 module mkPipelineFifoBig(Fifo#(n, t)) provisos(Bits#(t, size_t));
   RegFile#(Bit#(TLog#(n)), t) data <- mkRegFileFull;
 
-  Ehr#(2, Bit#(TLog#(n))) nextP <- mkEhr(0);
-  Ehr#(2, Bit#(TLog#(n))) firstP <- mkEhr(0);
-  Ehr#(2, Bool) empty <- mkEhr(True);
-  Ehr#(2, Bool) full <- mkEhr(False);
+  Reg#(Bit#(TLog#(n))) nextP[2] <- mkCReg(2, 0);
+  Reg#(Bit#(TLog#(n))) firstP[2] <- mkCReg(2, 0);
+  Reg#(Bool) empty[2] <- mkCReg(2, True);
+  Reg#(Bool) full[2] <- mkCReg(2, False);
 
   Bit#(TLog#(n)) max_index = fromInteger(valueOf(n) - 1);
 
@@ -206,7 +205,7 @@ module mkPipelineFifoBig(Fifo#(n, t)) provisos(Bits#(t, size_t));
 endmodule
 
 module mkPipelineFifoOne(Fifo#(n, t)) provisos(Bits#(t, size_t));
-  Ehr#(2, Bool) valid <- mkEhr(False);
+  Reg#(Bool) valid[2] <- mkCReg(2, False);
   Reg#(t) value <- mkReg(?);
 
   method canEnq = !valid[1];

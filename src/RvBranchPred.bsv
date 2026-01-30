@@ -2,7 +2,6 @@ import ForwardBRAM::*;
 import BRAMCore::*;
 import RvInstr::*;
 import RegFile::*;
-import Ehr::*;
 
 // Each instruction that may update the control flow has an associated "instruction kind", this kind
 // is used to known the predictor to use to find the next program counter
@@ -267,7 +266,7 @@ module mkBranchPredictor(BranchPred);
   Reg#(Bit#(32)) numHit <- mkReg(0);
   Reg#(Bit#(32)) numMis <- mkReg(0);
 
-  Ehr#(2, History) history <- mkEhr(0);
+  Reg#(History) history[2] <- mkCReg(2, 0);
 
   Reg#(Bit#(32)) pcReg <- mkRegU;
 

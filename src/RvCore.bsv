@@ -1,7 +1,8 @@
 import MultiRegFile :: *;
-import ForwardBRAM :: *;
 import RvBranchPred :: *;
+import ForwardBRAM :: *;
 import BRAMCore :: *;
+import RegFile :: *;
 import RvInstr :: *;
 import RvFetch :: *;
 import Vector :: *;
@@ -9,9 +10,8 @@ import Assert :: *;
 import RvAlu :: *;
 import UART :: *;
 import Fifo :: *;
-import Ehr :: *;
 
-interface DispatchBuffer;
+interface DispatchBuffer#(numeric type size);
   // Give the current values inside the buffer
   (* always_ready *) method Bundle _read;
 
@@ -25,8 +25,8 @@ interface DispatchBuffer;
 endinterface
 
 (* synthesize *)
-module mkDispatchBuffer(DispatchBuffer);
-  Ehr#(2, Super#(Bool)) mask <- mkEhr(replicate(False));
+module mkDispatchBuffer(DispatchBuffer#(0));
+  Reg#(Super#(Bool)) mask[2] <- mkCReg(2, replicate(False));
   Reg#(Super#(Bit#(32))) bpredictionBuf <- mkReg(?);
   Reg#(Super#(CauseException)) causeBuf <- mkReg(?);
   Reg#(Super#(Bool)) exceptionBuf <- mkReg(?);
@@ -71,6 +71,63 @@ module mkDispatchBuffer(DispatchBuffer);
   endmethod
 endmodule
 
+module mkDispatchBuffer2(DispatchBuffer#(n));
+  Reg#(Vector#(n, Super#(Bool))) masks[2] <- mkCReg(2, replicate(replicate(False)));
+  RegFile#(Bit#(TLog#(n)), Super#(Bit#(32))) bpredictionBuf <- mkRegFileFull;
+  RegFile#(Bit#(TLog#(n)), Super#(CauseException)) causeBuf <- mkRegFileFull;
+  RegFile#(Bit#(TLog#(n)), Super#(Bool)) exceptionBuf <- mkRegFileFull;
+  RegFile#(Bit#(TLog#(n)), BranchPredState) bstateBuf <- mkRegFileFull;
+  RegFile#(Bit#(TLog#(n)), Super#(RvInstr)) instrBuf <- mkRegFileFull;
+  RegFile#(Bit#(TLog#(n)), Super#(Bit#(32))) pcBuf <- mkRegFileFull;
+  RegFile#(Bit#(TLog#(n)), Epoch) epochBuf <- mkRegFileFull;
+
+  Reg#(Bit#(TLog#(n))) head <- mkReg(0);
+  Reg#(Bit#(TLog#(n))) tail <- mkReg(0);
+
+  method _read = Bundle{
+    bprediction: bpredictionBuf.sub(head),
+    exception: exceptionBuf.sub(head),
+    bstate: bstateBuf.sub(head),
+    cause: causeBuf.sub(head),
+    instr: instrBuf.sub(head),
+    epoch: epochBuf.sub(head),
+    mask: masks[0][head],
+    pc: pcBuf.sub(head)
+  };
+
+  method Action consume(Super#(Bool) consumed);
+    Super#(Bool) newMask = masks[0][head];
+    Bool found = False;
+
+    for (Integer i=0; i < supSize; i = i + 1) begin
+      dynamicAssert(!found || !newMask[i] || !consumed[i], "DispatchBuffer<comsume> incoherent state");
+      if (newMask[i] && !consumed[i]) found = True;
+      if (consumed[i]) newMask[i] = False;
+    end
+
+    if (newMask == replicate(False)) head <= head == fromInteger(valueof(n)-1) ? 0 : head+1;
+    masks[0][head] <= newMask;
+  endmethod
+
+  method Action put(Bundle in) if (masks[1][tail] == replicate(False));
+    tail <= tail == fromInteger(valueof(n)-1) ? 0 : tail+1;
+    bpredictionBuf.upd(tail, in.bprediction);
+    exceptionBuf.upd(tail, in.exception);
+    bstateBuf.upd(tail, in.bstate);
+    instrBuf.upd(tail, in.instr);
+    epochBuf.upd(tail, in.epoch);
+    causeBuf.upd(tail, in.cause);
+    masks[1][tail] <= in.mask;
+    pcBuf.upd(tail, in.pc);
+  endmethod
+endmodule
+
+//(* synthesize *)
+module mkDispatchBuffer3(DispatchBuffer#(1));
+  let ifc <- mkDispatchBuffer2;
+  return ifc;
+endmodule
+
 interface CpuIfc;
   (* always_ready, always_enabled *)
   method Bit#(8) led;
@@ -93,11 +150,11 @@ module mkCPU(CpuIfc);
     cycle <= cycle + 1;
   endrule
 
-  Ehr#(2, Bit#(32)) scoreboard <- mkEhr(0);
+  Reg#(Bit#(32)) scoreboard[2] <- mkCReg(2, 0);
 
   MultiRF#(TMul#(2, SupSize), SupSize, ArchReg, Bit#(32)) regFile <- mkForwardMultiRF(0, 31);
 
-  Ehr#(2, Epoch) epoch <- mkEhr(0);
+  Reg#(Epoch) epoch[2] <- mkCReg(2, 0);
 
   Fifo#(2, Tuple3#(Bit#(32), Epoch, BranchPredTrain)) redirectQ <- mkFifo;
 
@@ -105,9 +162,8 @@ module mkCPU(CpuIfc);
 
   DecodeIfc decode <- mkDecode;
 
-  DispatchBuffer inBuffer <- mkDispatchBuffer;
-
-  DispatchBuffer outBuffer <- mkDispatchBuffer;
+  let inBuffer <- mkDispatchBuffer3;
+  let outBuffer <- mkDispatchBuffer3;
 
   Vector#(SupSize, AluIfc) aluVec <- replicateM(mkAlu);
 

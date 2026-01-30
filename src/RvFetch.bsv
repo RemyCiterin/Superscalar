@@ -4,7 +4,6 @@ import RvInstr :: *;
 import Vector :: *;
 import Assert :: *;
 import Fifo :: *;
-import Ehr :: *;
 
 interface InstructionMemory;
   method Action request(Bit#(32) address);
@@ -59,8 +58,8 @@ endinterface
 
 (* synthesize *)
 module mkFetch(FetchIfc);
-  Ehr#(3, Epoch) nextEpoch <- mkEhr(0);
-  Ehr#(3, Bit#(32)) nextPc <- mkEhr('h80000000);
+  Reg#(Epoch) nextEpoch[3] <- mkCReg(3, 0);
+  Reg#(Bit#(32)) nextPc[3] <- mkCReg(3, 'h80000000);
 
   Bool bpredEnabled = True;
 

@@ -1,6 +1,5 @@
 import RvInstr::*;
 import MulDiv::*;
-import Ehr::*;
 
 import BuildList::*;
 
@@ -16,7 +15,7 @@ endinterface
 
 (* synthesize *)
 module mkAlu(AluIfc);
-  Ehr#(2, Bool) valid <- mkEhr(False);
+  Reg#(Bool) valid[2] <- mkCReg(2, False);
   Reg#(AluRequest) request <- mkRegU;
 
   let isDivRem = List::elem(request.instr.opcode, lst(Div, Divu, Rem, Remu));

@@ -1,5 +1,3 @@
-import Ehr :: *;
-
 export MulRequest(..);
 export DivRequest(..);
 export MulServer(..);
