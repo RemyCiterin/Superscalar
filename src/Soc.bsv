@@ -4,10 +4,7 @@ import RvInstr::*;
 import RvAlu::*;
 import UART::*;
 
-import Fetch :: *;
-import BranchPred::*;
-
-import MulDiv :: *;
+import RvCore :: *;
 
 interface MainIfc;
   (* always_ready, always_enabled *)
