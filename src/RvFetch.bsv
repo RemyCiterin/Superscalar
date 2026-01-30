@@ -1,4 +1,4 @@
-import BranchPred :: *;
+import RvBranchPred :: *;
 import BRAMCore :: *;
 import RvInstr :: *;
 import Vector :: *;

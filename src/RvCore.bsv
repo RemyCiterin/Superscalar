@@ -1,6 +1,6 @@
 import MultiRegFile :: *;
 import ForwardBRAM :: *;
-import BranchPred :: *;
+import RvBranchPred :: *;
 import BRAMCore :: *;
 import RvInstr :: *;
 import RvFetch :: *;
