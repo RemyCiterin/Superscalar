@@ -100,7 +100,7 @@ run:
 yosys:
 	yosys \
 		-DULX3S -q -p "synth_ecp5 -abc9 -abc2 -top top -json ./build/mkTop.json" \
-		$(LIB) rtl/*.v src/top_ulx3s.v
+		$(LIB) build/*.v src/top_ulx3s.v
 
 .PHONY: nextpnr
 nextpnr:

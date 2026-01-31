@@ -15,6 +15,7 @@ interface MainIfc;
   method Bit#(1) transmit;
 endinterface
 
+(* synthesize *)
 module mkSoc(MainIfc);
   let cpu <- mkCPU();
   method transmit = cpu.transmit;

@@ -93,6 +93,22 @@ pub inline fn custom_insn1(
     return x;
 }
 
+pub inline fn custom_insn2(
+    comptime rd: []const u8,
+    comptime rs1: []const u8,
+    val: usize,
+) void {
+    if (rd[0] != 'v') @compileError("Invalid destination register");
+    if (rs1[0] != 'v') @compileError("Invalid source register");
+
+    asm volatile (".insn r CUSTOM_0, 0x0, 0x2, x" ++ rd[1..] ++
+            ", x" ++ rs1[1..] ++
+            ", %[rs2]"
+        :
+        : [rs2] "r" (val),
+    );
+}
+
 var kalloc: Allocator = undefined;
 
 pub export fn kernel_main() align(16) callconv(.C) void {
@@ -135,6 +151,7 @@ pub export fn kernel_main() align(16) callconv(.C) void {
 
     custom_insn0("v0", "v1", "v2");
     _ = custom_insn1("v0", "v1");
+    custom_insn2("v0", "v1", 42);
 
     while (true) {}
 
