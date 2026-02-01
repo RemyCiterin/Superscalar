@@ -1,6 +1,7 @@
 import MultiRegFile :: *;
 import RvBranchPred :: *;
 import ForwardBRAM :: *;
+import BuildVector :: *;
 import BRAMCore :: *;
 import RegFile :: *;
 import RvInstr :: *;
@@ -10,6 +11,88 @@ import Assert :: *;
 import RvAlu :: *;
 import UART :: *;
 import Fifo :: *;
+
+interface CommitIfc;
+  (* always_ready *) method CauseException cause;
+  (* always_ready *) method Bit#(32) nextPc;
+  (* always_ready *) method Bool exception;
+  (* always_ready *) method Bool valid;
+  method Action commit(Bool keep);
+endinterface
+
+interface WriteBackIfc;
+  (* always_ready *) method Bit#(32) result;
+  (* always_ready *) method ArchReg destination;
+  (* always_ready *) method Bool valid;
+  method Action deq;
+endinterface
+
+interface ForwardIfc;
+  (* always_ready *) method ArchReg destination;
+  (* always_ready *) method Bit#(32) result;
+  (* always_ready *) method Epoch epoch;
+  (* always_ready *) method Bool valid;
+endinterface
+
+interface ExecIfc#(numeric type numFwd);
+  // Stage 1: put an alu request to the
+  method Action enter(AluRequest alu, Epoch epoch);
+
+  // Stage 2: resolve control flow
+  interface CommitIfc commit;
+
+  // Stage 3: write back the result
+  interface WriteBackIfc writeBack;
+
+  interface Vector#(numFwd, ForwardIfc) forward;
+endinterface
+
+(* synthesize *)
+module mkExecAlu(ExecIfc#(1));
+  let alu <- mkAlu(True, True, True);
+  Reg#(RvInstr) instr <- mkRegU;
+  Reg#(Epoch) epoch <- mkRegU;
+
+  Reg#(Bool) valid2[2] <- mkCReg(2, False);
+  Reg#(Bit#(32)) value2 <- mkRegU;
+  Reg#(ArchReg) rd2 <- mkRegU;
+
+  method Action enter(AluRequest req, Epoch ep);
+    instr <= req.instr;
+    alu.enter(req);
+    epoch <= ep;
+  endmethod
+
+  interface CommitIfc commit;
+    method valid = alu.canDeq && !valid2[1];
+    method exception = alu.response.exception;
+    method cause = alu.response.cause;
+    method nextPc = alu.response.pc;
+
+    method Action commit(Bool keep);
+      if (keep) valid2[1] <= True;
+      value2 <= alu.response.rd;
+      rd2 <= instr.rd;
+    endmethod
+  endinterface
+
+  interface forward = vec(interface ForwardIfc;
+    method result = alu.response.rd;
+    method destination = instr.rd;
+    method valid = alu.canDeq;
+    method epoch = epoch;
+  endinterface);
+
+  interface WriteBackIfc writeBack;
+    method destination = rd2;
+    method valid = valid2[0];
+    method result = value2;
+
+    method Action deq;
+      valid2[0] <= False;
+    endmethod
+  endinterface
+endmodule
 
 // This register file/scoreboard is in charge of reading/forwarding to the entry of the execution
 // pipeline, and checking for hazards (read-after-write and write-after-write)
@@ -22,7 +105,7 @@ interface RegisterFile#(
   // Free a register in the score board and commit it's destination to the register file
   interface Vector#(numWr, WritePort#(ArchReg, Maybe#(Bit#(32)))) commitPorts;
 
-  // Read a value from the register file or forwarding ports and check for RaW hazards
+  // Read a value from the register file or forwarding ports and check for read-after-write hazards
   interface Vector#(numRd, ReadPort#(ArchReg, Maybe#(Bit#(32)))) readPorts;
 
   // Forward a value from an intermediate stage of the pipeline to the read ports
@@ -132,7 +215,7 @@ module mkRegisterFile(RegisterFile#(numRd, numWr, numFwd, numDst));
   interface readPorts = reads;
 endmodule
 
-interface DispatchBuffer#(numeric type size);
+interface DispatchBuffer;
   // Give the current values inside the buffer
   (* always_ready *) method Bundle _read;
 
@@ -145,32 +228,29 @@ interface DispatchBuffer#(numeric type size);
   method Action put(Bundle in);
 endinterface
 
-module mkDispatchBuffer(DispatchBuffer#(n));
-  Reg#(Vector#(n, Super#(Bool))) masks[2] <- mkCReg(2, replicate(replicate(False)));
-  RegFile#(Bit#(TLog#(n)), Super#(Bit#(32))) bpredictionBuf <- mkRegFileFull;
-  RegFile#(Bit#(TLog#(n)), Super#(CauseException)) causeBuf <- mkRegFileFull;
-  RegFile#(Bit#(TLog#(n)), Super#(Bool)) exceptionBuf <- mkRegFileFull;
-  RegFile#(Bit#(TLog#(n)), BranchPredState) bstateBuf <- mkRegFileFull;
-  RegFile#(Bit#(TLog#(n)), Super#(RvInstr)) instrBuf <- mkRegFileFull;
-  RegFile#(Bit#(TLog#(n)), Super#(Bit#(32))) pcBuf <- mkRegFileFull;
-  RegFile#(Bit#(TLog#(n)), Epoch) epochBuf <- mkRegFileFull;
-
-  Reg#(Bit#(TLog#(n))) head <- mkReg(0);
-  Reg#(Bit#(TLog#(n))) tail <- mkReg(0);
+module mkDispatchBuffer(DispatchBuffer);
+  Reg#(Super#(Bool)) masks[2] <- mkCReg(2, replicate(False));
+  Reg#(Super#(Bit#(32))) bpredictionBuf <- mkRegU;
+  Reg#(Super#(CauseException)) causeBuf <- mkRegU;
+  Reg#(Super#(Bool)) exceptionBuf <- mkRegU;
+  Reg#(BranchPredState) bstateBuf <- mkRegU;
+  Reg#(Super#(RvInstr)) instrBuf <- mkRegU;
+  Reg#(Super#(Bit#(32))) pcBuf <- mkRegU;
+  Reg#(Epoch) epochBuf <- mkRegU;
 
   method _read = Bundle{
-    bprediction: bpredictionBuf.sub(head),
-    exception: exceptionBuf.sub(head),
-    bstate: bstateBuf.sub(head),
-    cause: causeBuf.sub(head),
-    instr: instrBuf.sub(head),
-    epoch: epochBuf.sub(head),
-    mask: masks[0][head],
-    pc: pcBuf.sub(head)
+    bprediction: bpredictionBuf,
+    exception: exceptionBuf,
+    bstate: bstateBuf,
+    cause: causeBuf,
+    instr: instrBuf,
+    epoch: epochBuf,
+    mask: masks[0],
+    pc: pcBuf
   };
 
   method Action consume(Super#(Bool) consumed);
-    Super#(Bool) newMask = masks[0][head];
+    Super#(Bool) newMask = masks[0];
     Bool found = False;
 
     for (Integer i=0; i < supSize; i = i + 1) begin
@@ -179,20 +259,18 @@ module mkDispatchBuffer(DispatchBuffer#(n));
       if (consumed[i]) newMask[i] = False;
     end
 
-    if (newMask == replicate(False)) head <= head == fromInteger(valueof(n)-1) ? 0 : head+1;
-    masks[0][head] <= newMask;
+    masks[0] <= newMask;
   endmethod
 
-  method Action put(Bundle in) if (masks[1][tail] == replicate(False));
-    tail <= tail == fromInteger(valueof(n)-1) ? 0 : tail+1;
-    bpredictionBuf.upd(tail, in.bprediction);
-    exceptionBuf.upd(tail, in.exception);
-    bstateBuf.upd(tail, in.bstate);
-    instrBuf.upd(tail, in.instr);
-    epochBuf.upd(tail, in.epoch);
-    causeBuf.upd(tail, in.cause);
-    masks[1][tail] <= in.mask;
-    pcBuf.upd(tail, in.pc);
+  method Action put(Bundle in) if (masks[1] == replicate(False));
+    bpredictionBuf <= in.bprediction;
+    exceptionBuf <= in.exception;
+    bstateBuf <= in.bstate;
+    instrBuf <= in.instr;
+    epochBuf <= in.epoch;
+    causeBuf <= in.cause;
+    masks[1] <= in.mask;
+    pcBuf <= in.pc;
   endmethod
 endmodule
 
@@ -287,10 +365,10 @@ module mkCPU(CpuIfc);
 
   DecodeIfc decode <- mkDecode;
 
-  DispatchBuffer#(1) inBuffer <- mkDispatchBuffer;
-  DispatchBuffer#(1) outBuffer <- mkDispatchBuffer;
+  DispatchBuffer inBuffer <- mkDispatchBuffer;
+  DispatchBuffer outBuffer <- mkDispatchBuffer;
 
-  Vector#(SupSize, AluIfc) aluVec <- replicateM(mkAlu);
+  Vector#(SupSize, AluIfc) aluVec <- replicateM(mkAlu(True, True, True));
 
   let lsu <- mkLsu;
 
@@ -313,36 +391,40 @@ module mkCPU(CpuIfc);
 
   Reg#(Bit#(32)) commitPc <- mkReg('h80000000);
 
-  rule commit if (outBuffer.mask != replicate(False) && !redirectQ.canDeq);
+  rule flush if (outBuffer.mask != replicate(False) && outBuffer.epoch != epoch[0]);
+    Bool stop = False;
+    Bool useMem = False;
+    Super#(Bool) consumed = replicate(False);
+
+    for (Integer i=0; i < supSize; i = i + 1) if (!stop && outBuffer.mask[i]) begin
+      RvInstr instr = outBuffer.instr[i];
+
+      Bool rdy = aluVec[i].canDeq;
+      if (instr.isMemAccess && useMem) rdy = False;
+      if (instr.isMemAccess && !lsu.canDeq) rdy = False;
+      if (!rdy) stop = True;
+
+      if (rdy) begin
+        regFile.commitPorts[i].request(outBuffer.instr[i].rd, Invalid);
+        if (instr.isMemAccess) lsu.deq(False);
+        if (instr.isMemAccess) useMem = True;
+        consumed[i] = True;
+        aluVec[i].deq;
+      end
+    end
+
+    outBuffer.consume(consumed);
+  endrule
+
+  rule commit
+    if (outBuffer.mask != replicate(False) && !redirectQ.canDeq && outBuffer.epoch == epoch[0]);
+
     Bool stop = False;
     Bool useMem = False;
     Bool trainHit = True;
     Bit#(32) currentPc = commitPc;
     Bit#(32) instrCounter = instret;
     Super#(Bool) consumed = replicate(False);
-
-    // Flush the entries in the pipeline
-    if (outBuffer.epoch != epoch[0]) begin
-      for (Integer i=0; i < supSize; i = i + 1) if (!stop && outBuffer.mask[i]) begin
-        RvInstr instr = outBuffer.instr[i];
-
-        Bool rdy = aluVec[i].canDeq;
-        if (instr.isMemAccess && useMem) rdy = False;
-        if (instr.isMemAccess && !lsu.canDeq) rdy = False;
-        if (!rdy) stop = True;
-
-        if (rdy) begin
-          regFile.commitPorts[i].request(outBuffer.instr[i].rd, Invalid);
-          if (instr.isMemAccess) lsu.deq(False);
-          if (instr.isMemAccess) useMem = True;
-          consumed[i] = True;
-          aluVec[i].deq;
-        end
-      end
-
-      trainHit = False;
-      stop = True;
-    end
 
     for (Integer i=0; i < supSize; i = i + 1) if (!stop && outBuffer.mask[i]) begin
       RvInstr instr = outBuffer.instr[i];

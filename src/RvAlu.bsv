@@ -14,7 +14,7 @@ interface AluIfc;
 endinterface
 
 (* synthesize *)
-module mkAlu(AluIfc);
+module mkAlu#(Bool multiplication, Bool division, Bool branch) (AluIfc);
   Reg#(Bool) valid[2] <- mkCReg(2, False);
   Reg#(AluRequest) request <- mkRegU;
 
@@ -25,9 +25,13 @@ module mkAlu(AluIfc);
   MulServer multiplier <- mkMulServer;
   DivServer divider <- mkDivServer;
 
+  Bool deqReady = valid[0] &&
+    (!division || !isDivRem || divider.valid) &&
+    (!multiplication || !isMul || multiplier.valid);
+
   method Bool canEnter = !valid[1];
   method Action enter(AluRequest req) if (!valid[1]);
-    if (List::elem(req.instr.opcode, lst(Div, Divu, Rem, Remu))) begin
+    if (division && List::elem(req.instr.opcode, lst(Div, Divu, Rem, Remu))) begin
       divider.enter(DivRequest{
         isSigned: List::elem(req.instr.opcode, lst(Div, Rem)),
         rem: List::elem(req.instr.opcode, lst(Rem, Remu)),
@@ -36,7 +40,7 @@ module mkAlu(AluIfc);
       });
     end
 
-    if (List::elem(req.instr.opcode, lst(Mul, Mulh, Mulhu, Mulhsu))) begin
+    if (multiplication && List::elem(req.instr.opcode, lst(Mul, Mulh, Mulhu, Mulhsu))) begin
       multiplier.enter(MulRequest{
         high: List::elem(req.instr.opcode, lst(Mulh, Mulhu, Mulhsu)),
         x1Signed: List::elem(req.instr.opcode, lst(Mul, Mulh, Mulhsu)),
@@ -50,22 +54,36 @@ module mkAlu(AluIfc);
     request <= req;
   endmethod
 
-  method canDeq = valid[0] && (!isDivRem || divider.valid) && (!isMul || multiplier.valid);
+  method canDeq = deqReady;
 
-  method Action deq if (valid[0] && (!isDivRem || divider.valid) && (!isMul || multiplier.valid));
+  method Action deq if (deqReady);
     valid[0] <= False;
   endmethod
 
   method AluResponse response;
-    if (isDivRem) return AluResponse{ pc: request.pc+4, rd: divider.response };
-    else if (isMul) return AluResponse{ pc: request.pc+4, rd: multiplier.response };
-    else return execAlu(request);
+    if (isDivRem && division) begin
+      return AluResponse{
+        rd: divider.response,
+        pc: request.pc+4,
+        exception: False,
+        cause: ?
+      };
+    end else if (isMul && multiplication) begin
+      return AluResponse{
+        rd: multiplier.response,
+        pc: request.pc+4,
+        exception: False,
+        cause: ?
+      };
+    end else return execAlu(request, branch);
   endmethod
 endmodule
 
 typedef struct {
   Bit#(32) pc;
   Bit#(32) rd;
+  Bool exception;
+  CauseException cause;
 } AluResponse deriving(Bits);
 
 typedef struct {
@@ -75,7 +93,7 @@ typedef struct {
   RvInstr instr;
 } AluRequest deriving(Bits);
 
-function AluResponse execAlu(AluRequest req);
+function AluResponse execAlu(AluRequest req, Bool branch);
   let opcode = req.instr.opcode;
   let imm = req.instr.imm;
   let rs1 = req.rs1;
@@ -116,8 +134,14 @@ function AluResponse execAlu(AluRequest req);
     Jal  : pc + imm;
     .*   : pc + 4;
   endcase;
+  if (!branch) nextPc = pc+4;
 
-  return AluResponse{rd: rd, pc: nextPc};
+  return AluResponse{
+    cause: InstructionAddressMisaligned,
+    exception: nextPc[1:0] != 0,
+    pc: nextPc,
+    rd: rd
+  };
 endfunction
 
 typedef struct {
