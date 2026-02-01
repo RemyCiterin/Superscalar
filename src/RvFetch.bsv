@@ -191,3 +191,62 @@ module mkDecode(DecodeIfc);
     };
   endmethod
 endmodule
+
+interface DispatchBuffer;
+  // Give the current values inside the buffer
+  (* always_ready *) method Bundle _read;
+
+  // consume some values of the buffer, the values that we consumes mue be coherents:
+  // if `0 <= a < b < supSize` are two indexes such that `self.mask[a] and self.mask[b]`, then we
+  // can't consume `b` before consuming `a`, otherwise we may observe some data hazards...
+  method Action consume(Super#(Bool) mask);
+
+  // Read some values from the decode stage, only called if the fetch buffer is empty
+  method Action put(Bundle in);
+endinterface
+
+module mkDispatchBuffer(DispatchBuffer);
+  Reg#(Super#(Bool)) masks[2] <- mkCReg(2, replicate(False));
+  Reg#(Super#(Bit#(32))) bpredictionBuf <- mkRegU;
+  Reg#(Super#(CauseException)) causeBuf <- mkRegU;
+  Reg#(Super#(Bool)) exceptionBuf <- mkRegU;
+  Reg#(BranchPredState) bstateBuf <- mkRegU;
+  Reg#(Super#(RvInstr)) instrBuf <- mkRegU;
+  Reg#(Super#(Bit#(32))) pcBuf <- mkRegU;
+  Reg#(Epoch) epochBuf <- mkRegU;
+
+  method _read = Bundle{
+    bprediction: bpredictionBuf,
+    exception: exceptionBuf,
+    bstate: bstateBuf,
+    cause: causeBuf,
+    instr: instrBuf,
+    epoch: epochBuf,
+    mask: masks[0],
+    pc: pcBuf
+  };
+
+  method Action consume(Super#(Bool) consumed);
+    Super#(Bool) newMask = masks[0];
+    Bool found = False;
+
+    for (Integer i=0; i < supSize; i = i + 1) begin
+      dynamicAssert(!found || !newMask[i] || !consumed[i], "DispatchBuffer<comsume> incoherent state");
+      if (newMask[i] && !consumed[i]) found = True;
+      if (consumed[i]) newMask[i] = False;
+    end
+
+    masks[0] <= newMask;
+  endmethod
+
+  method Action put(Bundle in) if (masks[1] == replicate(False));
+    bpredictionBuf <= in.bprediction;
+    exceptionBuf <= in.exception;
+    bstateBuf <= in.bstate;
+    instrBuf <= in.instr;
+    epochBuf <= in.epoch;
+    causeBuf <= in.cause;
+    masks[1] <= in.mask;
+    pcBuf <= in.pc;
+  endmethod
+endmodule

@@ -3,6 +3,7 @@ import RvBranchPred :: *;
 import ForwardBRAM :: *;
 import BuildVector :: *;
 import BRAMCore :: *;
+import RvDCache :: *;
 import RegFile :: *;
 import RvInstr :: *;
 import RvFetch :: *;
@@ -11,6 +12,10 @@ import Assert :: *;
 import RvAlu :: *;
 import UART :: *;
 import Fifo :: *;
+
+import Connectable :: *;
+import TLTypes :: *;
+import TLBram :: *;
 
 interface CommitIfc;
   (* always_ready *) method CauseException cause;
@@ -37,6 +42,7 @@ endinterface
 interface ExecIfc#(numeric type numFwd);
   // Stage 1: put an alu request to the
   method Action enter(AluRequest alu, Epoch epoch);
+  method Bool canEnter;
 
   // Stage 2: resolve control flow
   interface CommitIfc commit;
@@ -57,6 +63,7 @@ module mkExecAlu(ExecIfc#(1));
   Reg#(Bit#(32)) value2 <- mkRegU;
   Reg#(ArchReg) rd2 <- mkRegU;
 
+  method canEnter = alu.canEnter;
   method Action enter(AluRequest req, Epoch ep);
     instr <= req.instr;
     alu.enter(req);
@@ -69,17 +76,18 @@ module mkExecAlu(ExecIfc#(1));
     method cause = alu.response.cause;
     method nextPc = alu.response.pc;
 
-    method Action commit(Bool keep);
+    method Action commit(Bool keep) if (alu.canDeq && !valid2[1]);
       if (keep) valid2[1] <= True;
       value2 <= alu.response.rd;
       rd2 <= instr.rd;
+      alu.deq;
     endmethod
   endinterface
 
   interface forward = vec(interface ForwardIfc;
+    method valid = alu.canDeq && !instr.isMemAccess;
     method result = alu.response.rd;
     method destination = instr.rd;
-    method valid = alu.canDeq;
     method epoch = epoch;
   endinterface);
 
@@ -88,190 +96,10 @@ module mkExecAlu(ExecIfc#(1));
     method valid = valid2[0];
     method result = value2;
 
-    method Action deq;
+    method Action deq if (valid2[0]);
       valid2[0] <= False;
     endmethod
   endinterface
-endmodule
-
-// This register file/scoreboard is in charge of reading/forwarding to the entry of the execution
-// pipeline, and checking for hazards (read-after-write and write-after-write)
-interface RegisterFile#(
-  numeric type numRd,
-  numeric type numWr,
-  numeric type numFwd,
-  numeric type numDst
-);
-  // Free a register in the score board and commit it's destination to the register file
-  interface Vector#(numWr, WritePort#(ArchReg, Maybe#(Bit#(32)))) commitPorts;
-
-  // Read a value from the register file or forwarding ports and check for read-after-write hazards
-  interface Vector#(numRd, ReadPort#(ArchReg, Maybe#(Bit#(32)))) readPorts;
-
-  // Forward a value from an intermediate stage of the pipeline to the read ports
-  interface Vector#(numFwd, WritePort#(ArchReg, Bit#(32))) forwardPorts;
-
-  // Check for write-after-write hazards in the pipeline
-  interface Vector#(numDst, ReadPort#(ArchReg, Bool)) destinationPorts;
-
-  // Allocate a new register in the scoreboard, ensure that no other instruction can write into it
-  // until the current one enter the commit stage
-  interface Vector#(numDst, WritePort#(ArchReg, void)) allocPorts;
-endinterface
-
-module mkRegisterFile(RegisterFile#(numRd, numWr, numFwd, numDst));
-  MultiRF#(numRd, numWr, ArchReg, Bit#(32)) rf <- mkForwardMultiRF(0,31);
-
-  Reg#(Bit#(32)) scoreboard[2] <- mkCReg(2, 0);
-
-  // Forward values from the execution units to the register read stage
-  Vector#(numFwd, RWire#(Tuple2#(ArchReg, Bit#(32)))) forwardVals <- replicateM(mkRWire);
-
-  Vector#(numDst, RWire#(ArchReg)) allocRegs <- replicateM(mkRWire);
-  Vector#(numWr, RWire#(ArchReg)) freeRegs <- replicateM(mkRWire);
-
-  (* fire_when_enabled, no_implicit_conditions *)
-  rule scoreboard_free_canon;
-    Bit#(32) score = scoreboard[0];
-
-    for (Integer i=0; i < valueof(numWr); i = i + 1) begin
-      if (freeRegs[i].wget matches tagged Valid .r &&& r != 0) score[r] = 0;
-    end
-
-    scoreboard[0] <= score;
-  endrule
-
-  (* fire_when_enabled, no_implicit_conditions *)
-  rule scoreboard_alloc_canon;
-    Bit#(32) score = scoreboard[1];
-
-    for (Integer i=0; i < valueof(numDst); i = i + 1) begin
-      if (allocRegs[i].wget matches tagged Valid .r &&& r != 0) score[r] = 1;
-    end
-
-    scoreboard[1] <= score;
-  endrule
-
-  Vector#(numWr, WritePort#(ArchReg, Maybe#(Bit#(32)))) commits = newVector;
-  Vector#(numRd, ReadPort#(ArchReg, Maybe#(Bit#(32)))) reads = newVector;
-  Vector#(numFwd, WritePort#(ArchReg, Bit#(32))) forwards = newVector;
-  Vector#(numDst, ReadPort#(ArchReg, Bool)) destinations = newVector;
-  Vector#(numDst, WritePort#(ArchReg, void)) allocs = newVector;
-
-  for (Integer i=0; i < valueof(numWr); i = i + 1) begin
-    commits[i] = interface WritePort;
-      method Action request(ArchReg r, Maybe#(Bit#(32)) data);
-        if (data matches tagged Valid .d &&& r != 0) rf.writePorts[i].request(r, d);
-        freeRegs[i].wset(r);
-      endmethod
-    endinterface;
-  end
-
-  for (Integer i=0; i < valueof(numRd); i = i + 1) begin
-    reads[i] = interface ReadPort;
-      method ActionValue#(Maybe#(Bit#(32))) request(ArchReg r);
-        Bit#(32) data <- rf.readPorts[i].request(r);
-        Bool rdy = scoreboard[1][r] == 0;
-        if (r == 0) data = 0;
-
-        for (Integer j=0; j < valueof(numFwd); j = j + 1) begin
-          if (forwardVals[j].wget matches tagged Valid {.fwdReg, .fwdData} &&& fwdReg == r) begin
-            data = fwdData;
-            rdy = True;
-          end
-        end
-
-        return rdy ? Valid(data) : Invalid;
-      endmethod
-    endinterface;
-  end
-
-  for (Integer i=0; i < valueof(numFwd); i = i + 1) begin
-    forwards[i] = interface WritePort;
-      method Action request(ArchReg r, Bit#(32) data);
-        if (r != 0) forwardVals[i].wset(tuple2(r, data));
-      endmethod
-    endinterface;
-  end
-
-  for (Integer i=0; i < valueof(numDst); i = i + 1) begin
-    destinations[i] = interface ReadPort;
-      method ActionValue#(Bool) request(ArchReg r);
-        return scoreboard[1][r] == 0;
-      endmethod
-    endinterface;
-
-    allocs[i] = interface WritePort;
-      method Action request(ArchReg r, void _);
-        allocRegs[i].wset(r);
-      endmethod
-    endinterface;
-  end
-
-  interface destinationPorts = destinations;
-  interface forwardPorts = forwards;
-  interface commitPorts = commits;
-  interface allocPorts = allocs;
-  interface readPorts = reads;
-endmodule
-
-interface DispatchBuffer;
-  // Give the current values inside the buffer
-  (* always_ready *) method Bundle _read;
-
-  // consume some values of the buffer, the values that we consumes mue be coherents:
-  // if `0 <= a < b < supSize` are two indexes such that `self.mask[a] and self.mask[b]`, then we
-  // can't consume `b` before consuming `a`, otherwise we may observe some data hazards...
-  method Action consume(Super#(Bool) mask);
-
-  // Read some values from the decode stage, only called if the fetch buffer is empty
-  method Action put(Bundle in);
-endinterface
-
-module mkDispatchBuffer(DispatchBuffer);
-  Reg#(Super#(Bool)) masks[2] <- mkCReg(2, replicate(False));
-  Reg#(Super#(Bit#(32))) bpredictionBuf <- mkRegU;
-  Reg#(Super#(CauseException)) causeBuf <- mkRegU;
-  Reg#(Super#(Bool)) exceptionBuf <- mkRegU;
-  Reg#(BranchPredState) bstateBuf <- mkRegU;
-  Reg#(Super#(RvInstr)) instrBuf <- mkRegU;
-  Reg#(Super#(Bit#(32))) pcBuf <- mkRegU;
-  Reg#(Epoch) epochBuf <- mkRegU;
-
-  method _read = Bundle{
-    bprediction: bpredictionBuf,
-    exception: exceptionBuf,
-    bstate: bstateBuf,
-    cause: causeBuf,
-    instr: instrBuf,
-    epoch: epochBuf,
-    mask: masks[0],
-    pc: pcBuf
-  };
-
-  method Action consume(Super#(Bool) consumed);
-    Super#(Bool) newMask = masks[0];
-    Bool found = False;
-
-    for (Integer i=0; i < supSize; i = i + 1) begin
-      dynamicAssert(!found || !newMask[i] || !consumed[i], "DispatchBuffer<comsume> incoherent state");
-      if (newMask[i] && !consumed[i]) found = True;
-      if (consumed[i]) newMask[i] = False;
-    end
-
-    masks[0] <= newMask;
-  endmethod
-
-  method Action put(Bundle in) if (masks[1] == replicate(False));
-    bpredictionBuf <= in.bprediction;
-    exceptionBuf <= in.exception;
-    bstateBuf <= in.bstate;
-    instrBuf <= in.instr;
-    epochBuf <= in.epoch;
-    causeBuf <= in.cause;
-    masks[1] <= in.mask;
-    pcBuf <= in.pc;
-  endmethod
 endmodule
 
 interface LsuIfc;
@@ -280,6 +108,7 @@ interface LsuIfc;
 
   method Action deq(Bool commit);
   (* always_ready *) method CauseException cause;
+  (* always_ready *) method ArchReg destination;
   (* always_ready *) method Bool exception;
   (* always_ready *) method Bit#(32) read;
   (* always_ready *) method Bool canDeq;
@@ -289,38 +118,54 @@ endinterface
 module mkLsu(LsuIfc);
   Bit#(32) minDmemAddr = 'h80000000;
   Bit#(32) maxDmemAddr = 'h80000000 + 'hFFFFF;
-  FORWARD_BRAM_BE#(Bit#(32), Bit#(32), 4) dmem <-
-    mkForwardBRAMCoreBELoad('hFFFFF, "Mem32.hex", False);
 
-  Reg#(Bool) valid[2] <- mkCReg(2, False);
-  Reg#(ArchReg) destination <- mkRegU;
+  BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
+    mkBRAMCore1BELoad('hFFFFF, False, "Mem32.hex", False);
+
+  TLSlave#(32, 32, 8, 8, 0) slave <- mkTLBram('h80000000, 'hFFFFF, dmem);
+
+  DCache#(8, 8) cache <- mkDCache(0);
+
+  mkConnection(cache.master, slave);
+
   Reg#(LsuRequest) request <- mkRegU;
+  Reg#(ArchReg) dest <- mkRegU;
 
-  method Bool canPut = !valid[1];
-  method Action put(LsuRequest req, ArchReg rd) if (!valid[1]);
-    let address = (req.address - 'h80000000) >> 2;
+  method Bool canPut = cache.canLookup;
+  method Action put(LsuRequest req, ArchReg rd) if (cache.canLookup);
+    //let address = (req.address - 'h80000000) >> 2;
 
-    if (minDmemAddr <= req.address && req.address <= maxDmemAddr) dmem.read(address);
-    destination <= rd;
-    valid[1] <= True;
+    //if (minDmemAddr <= req.address && req.address <= maxDmemAddr) dmem.read(address);
+
+    cache.lookup(DCacheReq{
+      opcode: req.store ? St : Ld,
+      mask: lsuRequestMask(req),
+      data: lsuRequestData(req),
+      address: req.address,
+      amo: ?
+    });
+
     request <= req;
+    dest <= rd;
   endmethod
 
+  method destination = dest;
   method exception = !lsuRequestAligned(request);
   method cause = request.store ? StoreAmoAddressMisaligned : LoadAddressMisaligned;
-  method Bit#(32) read = lsuRequestRd(request, dmem.response);
-  method Bool canDeq = valid[0];
+  method Bit#(32) read = lsuRequestRd(request, cache.response);
+  method Bool canDeq = cache.valid;
 
-  method Action deq(Bool commit) if (valid[0]);
+  method Action deq(Bool commit);
     let address = (request.address - 'h80000000) >> 2;
     let mask = lsuRequestMask(request);
     let data = lsuRequestData(request);
 
+    cache.deq(commit);
     if (commit && request.store) begin
-      if (minDmemAddr <= request.address && request.address <= maxDmemAddr) begin
-        //$display("        mem[%h] <= %h if %b", request.address, data, mask);
-        dmem.write(mask, address, data);
-      end
+      //if (minDmemAddr <= request.address && request.address <= maxDmemAddr) begin
+      //  //$display("        mem[%h] <= %h if %b", request.address, data, mask);
+      //  dmem.write(mask, address, data);
+      //end
 
       if (request.address == 'h10000000 && mask[0] == 1) begin
         $write("%c", data[7:0]);
@@ -329,8 +174,59 @@ module mkLsu(LsuIfc);
       end
     end
 
-    valid[0] <= False;
   endmethod
+endmodule
+
+
+(* synthesize *)
+module mkExecLsu(ExecIfc#(1));
+  Reg#(Bit#(32)) pc1 <- mkRegU;
+  Reg#(Epoch) epoch1 <- mkRegU;
+  let lsu <- mkLsu;
+
+  Reg#(Bool) valid2[2] <- mkCReg(2, False);
+  Reg#(Bit#(32)) result2 <- mkRegU;
+  Reg#(ArchReg) rd2 <- mkRegU;
+
+  method canEnter = lsu.canPut;
+  method Action enter(AluRequest req, Epoch epoch);
+    lsu.put(getLsuRequest(req), req.instr.rd);
+    epoch1 <= epoch;
+    pc1 <= req.pc;
+  endmethod
+
+  interface CommitIfc commit;
+    method nextPc = pc1 + 4;
+    method valid = lsu.canDeq && !valid2[1];
+    method exception = lsu.exception;
+    method cause = lsu.cause;
+
+    method Action commit(Bool keep) if (lsu.canDeq && !valid2[1]);
+      if (keep) valid2[1] <= True;
+      rd2 <= lsu.destination;
+      result2 <= lsu.read;
+      lsu.deq(keep);
+    endmethod
+  endinterface
+
+  interface forward = vec(
+    interface ForwardIfc;
+      method valid = lsu.canDeq && !lsu.exception;
+      method destination = lsu.destination;
+      method result = lsu.read;
+      method epoch = epoch1;
+    endinterface
+  );
+
+  interface WriteBackIfc writeBack;
+    method result = result2;
+    method destination = rd2;
+    method valid = valid2[0];
+
+    method Action deq if (valid2[0]);
+      valid2[0] <= False;
+    endmethod
+  endinterface
 endmodule
 
 interface CpuIfc;
@@ -355,7 +251,13 @@ module mkCPU(CpuIfc);
     cycle <= cycle + 1;
   endrule
 
-  RegisterFile#(TMul#(2, SupSize), SupSize, 0, SupSize) regFile <- mkRegisterFile;
+  Reg#(Bit#(32)) scoreboard[3] <- mkCReg(3, 0);
+
+  MultiRF#(TMul#(2, SupSize), TAdd#(1,SupSize), ArchReg, Bit#(32))
+    regFile <- mkForwardMultiRF(0, 31);
+
+  List#(RWire#(Tuple2#(ArchReg, Bit#(32))))
+    forwarding <- List::replicateM(2*supSize+1, mkRWire);
 
   Reg#(Epoch) epoch[2] <- mkCReg(2, 0);
 
@@ -368,9 +270,9 @@ module mkCPU(CpuIfc);
   DispatchBuffer inBuffer <- mkDispatchBuffer;
   DispatchBuffer outBuffer <- mkDispatchBuffer;
 
-  Vector#(SupSize, AluIfc) aluVec <- replicateM(mkAlu(True, True, True));
+  Vector#(SupSize, ExecIfc#(1)) alu <- replicateM(mkExecAlu);
 
-  let lsu <- mkLsu;
+  ExecIfc#(1) lsu <- mkExecLsu;
 
   rule redirect;
     match {.pc, .epoch, .train} = redirectQ.first;
@@ -389,31 +291,76 @@ module mkCPU(CpuIfc);
     inBuffer.put(data);
   endrule
 
+  rule forward;
+    ForwardIfc fwd = lsu.forward[0];
+
+    //if (fwd.valid && fwd.epoch == epoch[0] && fwd.destination != 0)
+    //  forwarding[0].wset(tuple2(fwd.destination, fwd.result));
+
+    for (Integer i=0; i < supSize; i = i + 1) begin
+      fwd = alu[i].forward[0];
+
+      if (fwd.valid && fwd.epoch == epoch[0] && fwd.destination != 0)
+        forwarding[i+1].wset(tuple2(fwd.destination, fwd.result));
+    end
+  endrule
+
+  rule writeBackRl;
+    Bit#(32) score = scoreboard[0];
+    WriteBackIfc wb = lsu.writeBack;
+
+    if (wb.valid) begin
+      if (wb.destination != 0) regFile.writePorts[0].request(wb.destination, wb.result);
+      score[wb.destination] = 0;
+      wb.deq;
+
+      if (debug && wb.destination != 0)
+        $display("      ", showReg(wb.destination), " <= %h", wb.result);
+    end
+
+    for (Integer i=0; i < supSize; i = i + 1) begin
+      wb = alu[i].writeBack;
+
+      if (wb.valid) begin
+        if (wb.destination != 0) regFile.writePorts[i+1].request(wb.destination, wb.result);
+        score[wb.destination] = 0;
+        wb.deq;
+
+        if (debug && wb.destination != 0)
+          $display("      ", showReg(wb.destination), " <= %h", wb.result);
+      end
+    end
+
+    scoreboard[0] <= score;
+  endrule
+
   Reg#(Bit#(32)) commitPc <- mkReg('h80000000);
 
   rule flush if (outBuffer.mask != replicate(False) && outBuffer.epoch != epoch[0]);
     Bool stop = False;
     Bool useMem = False;
+    Bit#(32) score = scoreboard[1];
     Super#(Bool) consumed = replicate(False);
 
     for (Integer i=0; i < supSize; i = i + 1) if (!stop && outBuffer.mask[i]) begin
       RvInstr instr = outBuffer.instr[i];
 
-      Bool rdy = aluVec[i].canDeq;
+      Bool rdy = alu[i].commit.valid;
       if (instr.isMemAccess && useMem) rdy = False;
-      if (instr.isMemAccess && !lsu.canDeq) rdy = False;
+      if (instr.isMemAccess && !lsu.commit.valid) rdy = False;
       if (!rdy) stop = True;
 
       if (rdy) begin
-        regFile.commitPorts[i].request(outBuffer.instr[i].rd, Invalid);
-        if (instr.isMemAccess) lsu.deq(False);
+        score[instr.rd] = 0;
+        if (instr.isMemAccess) lsu.commit.commit(False);
         if (instr.isMemAccess) useMem = True;
+        alu[i].commit.commit(False);
         consumed[i] = True;
-        aluVec[i].deq;
       end
     end
 
     outBuffer.consume(consumed);
+    scoreboard[1] <= score;
   endrule
 
   rule commit
@@ -423,6 +370,7 @@ module mkCPU(CpuIfc);
     Bool useMem = False;
     Bool trainHit = True;
     Bit#(32) currentPc = commitPc;
+    Bit#(32) score = scoreboard[1];
     Bit#(32) instrCounter = instret;
     Super#(Bool) consumed = replicate(False);
 
@@ -434,43 +382,47 @@ module mkCPU(CpuIfc);
       dynamicAssert(pc == currentPc, "control flow error");
 
       let rdy = !(instr.isMemAccess && useMem);
-      if (instr.isMemAccess && !lsu.canDeq) rdy = False;
-      if (!aluVec[i].canDeq) rdy = False;
+      if (instr.isMemAccess && !lsu.commit.valid) rdy = False;
+      if (!alu[i].commit.valid) rdy = False;
       if (!rdy) stop = True;
 
-      let resp = aluVec[i].response;
+      let exception = instr.isMemAccess ? lsu.commit.exception : alu[i].commit.exception;
+      let nextPc = instr.isMemAccess ? lsu.commit.nextPc : alu[i].commit.nextPc;
+      let cause = instr.isMemAccess ? lsu.commit.cause : alu[i].commit.cause;
+
+      if (outBuffer.exception[i]) begin
+        cause = outBuffer.cause[i];
+        exception = True;
+      end
 
       if (rdy) begin
         consumed[i] = True;
         instrCounter = instrCounter + 1;
-        aluVec[i].deq;
+        alu[i].commit.commit(!instr.isMemAccess && !exception);
 
         if (debug) $display(cycle, " commit 0x%h: ", pc, showRvInstr(instr));
 
         if (outBuffer.exception[i]) $display("cycle: %d instret: %d", cycle, instret);
 
         if (instr.isMemAccess) begin
-          lsu.deq(!lsu.exception);
+          lsu.commit.commit(!exception);
           useMem = True;
         end
 
-        if (outBuffer.exception[i]) regFile.commitPorts[i].request(rd, Invalid);
-        else regFile.commitPorts[i].request(rd, Valid(instr.isMemAccess ? lsu.read : resp.rd));
-        if (debug && rd != 0)
-          $display("          ", showReg(rd), " = %h", instr.isMemAccess ? lsu.read : resp.rd);
+        currentPc = nextPc;
 
-        currentPc = resp.pc;
+        if (exception) score[instr.rd] = 0;
 
         // Misprediction: redirect pipeline
-        if (resp.pc != outBuffer.bprediction[i]) begin
-          if (debug) $display("          redirect from 0x%h to 0x%h", pc, resp.pc);
+        if (nextPc != outBuffer.bprediction[i]) begin
+          if (debug) $display("          redirect from 0x%h to 0x%h", pc, nextPc);
 
           redirectQ.enq(tuple3(
-            resp.pc, epoch[0]+1,
+            nextPc, epoch[0]+1,
             BranchPredTrain{
               instrs: Valid(outBuffer.instr),
               state: outBuffer.bstate,
-              nextPc: resp.pc,
+              nextPc: nextPc,
               pc: pc
             }
           ));
@@ -493,12 +445,14 @@ module mkCPU(CpuIfc);
 
     outBuffer.consume(consumed);
     instret <= instrCounter;
+    scoreboard[1] <= score;
     commitPc <= currentPc;
   endrule
 
   rule dispatch if (inBuffer.mask != replicate(False));
     Bool stop = False;
     Bool useMem = False;
+    Bit#(32) score = scoreboard[2];
     Super#(Bool) consumed = replicate(False);
 
     for (Integer i=0; i < supSize; i = i + 1) if (!stop && inBuffer.mask[i]) begin
@@ -510,13 +464,28 @@ module mkCPU(CpuIfc);
       ArchReg rd = instr.rd;
 
       // Check if we are ready to schedule the instruction
-      let maybeOp1 <- regFile.readPorts[i].request(rs1);
-      let maybeOp2 <- regFile.readPorts[i].request(rs2);
-      Bool rdy <- regFile.destinationPorts[i].request(rd);
-      if (!isJust(maybeOp1) || !isJust(maybeOp2)) rdy = False;
+      Bit#(32) op1 <- regFile.readPorts[2*i].request(rs1);
+      Bit#(32) op2 <- regFile.readPorts[2*i+1].request(rs2);
+      if (rs1 == 0) op1 = 0;
+      if (rs2 == 0) op2 = 0;
 
-      let op1 = unJust(maybeOp1);
-      let op2 = unJust(maybeOp2);
+      Bool rdy1 = score[rs1] == 0;
+      Bool rdy2 = score[rs2] == 0;
+
+      for (Integer j=0; j < List::length(forwarding); j = j + 1) begin
+        if (forwarding[j].wget matches tagged Valid {.r, .d} &&& r == rs1) begin
+          rdy1 = True;
+          op1 = d;
+        end
+
+        if (forwarding[j].wget matches tagged Valid {.r, .d} &&& r == rs2) begin
+          rdy2 = True;
+          op2 = d;
+        end
+      end
+
+      Bool rdy = score[rd] == 0;
+      if (!rdy1 || !rdy2) rdy = False;
 
       for (Integer j=0; j < i; j = j + 1) if (inBuffer.mask[j]) begin
         if (rs1 != 0 && rs1 == inBuffer.instr[j].rd) rdy = False;
@@ -524,15 +493,16 @@ module mkCPU(CpuIfc);
         if (rd != 0 && rd == inBuffer.instr[j].rd) rdy = False;
       end
 
-      if (!lsu.canPut && instr.isMemAccess) rdy = False;
+      if (!lsu.canEnter && instr.isMemAccess) rdy = False;
       if (useMem && instr.isMemAccess) rdy = False;
-      if (!aluVec[i].canEnter) rdy = False;
+      if (!alu[i].canEnter) rdy = False;
       if (!rdy) stop = True;
 
       if (rdy) begin
         consumed[i] = True;
-        regFile.allocPorts[i].request(rd, ?);
+        if (rd != 0) score[rd] = 1;
 
+        //$display(cycle, " enter: ", showRvInstr(instr));
         let aluReq = AluRequest{
           instr: instr,
           rs1: op1,
@@ -540,15 +510,16 @@ module mkCPU(CpuIfc);
           pc: pc
         };
 
-        aluVec[i].enter(aluReq);
+        alu[i].enter(aluReq, inBuffer.epoch);
 
         if (instr.isMemAccess) begin
-          lsu.put(getLsuRequest(aluReq), rd);
+          lsu.enter(aluReq, inBuffer.epoch);
           useMem = True;
         end
       end
     end
 
+    scoreboard[2] <= score;
     inBuffer.consume(consumed);
     outBuffer.put(Bundle{
       bprediction: inBuffer.bprediction,
@@ -563,4 +534,5 @@ module mkCPU(CpuIfc);
   endrule
 
   method transmit = txUart.transmit;
+  method led = 0;
 endmodule

@@ -3,7 +3,6 @@ import MulDiv::*;
 
 import BuildList::*;
 
-
 interface AluIfc;
   (* always_ready *) method Bool canEnter;
   method Action enter(AluRequest req);

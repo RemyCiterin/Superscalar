@@ -22,6 +22,7 @@ module mkTLBram#(
   Fifo#(1, ChannelD#(`TL_ARGS)) queue <- mkPipelineFifo;
 
   Bit#(sizeW) logBusSize = fromInteger(log2(valueOf(dataW)/8));
+  TLSize busSize = fromInteger(valueOf(dataW)/8);
 
   TLMaster#(`TL_ARGS) master = interface TLMaster;
     interface channelA = toFifoO(fifoA);
@@ -31,22 +32,27 @@ module mkTLBram#(
     interface channelE = nullFifoO;
   endinterface;
 
-  // Keep track of the status of each request:
-  // - the address of the current beat
-  // - is the current beat the last one
-  MetaChannelA#(`TL_ARGS) metaA <- mkMetaChannelA(master.channelA);
-  let message = metaA.channel.first;
+  Reg#(TLSize) size <- mkReg(0);
+  Reg#(Bit#(addrW)) address <- mkRegU;
 
-  rule request;
+  let message = fifoA.first;
+
+  rule request if (fifoA.canDeq);
     Bool isWrite = message.opcode == PutData;
     let mask = isWrite ? message.mask : 0;
 
-    if (baseSize >= metaA.address - baseAddr)
-      bram.put(mask, (metaA.address - baseAddr) >> logBusSize, message.data);
+    let sz = size == 0 ? 1 << message.size : size;
+    let addr = size == 0 ? message.address : address;
 
-    metaA.channel.deq;
+    if (baseSize >= addr - baseAddr)
+      bram.put(mask, (addr - baseAddr) >> logBusSize, message.data);
 
-    if (metaA.last || !isWrite) begin
+    address <= addr + fromInteger(valueof(dataW)/8);
+    size <= sz > busSize ? sz - busSize : 0;
+
+    if (isWrite || sz <= busSize) fifoA.deq;
+
+    if (!isWrite || sz <= busSize) begin
       queue.enq(ChannelD{
         opcode: isWrite ? AccessAck : AccessAckData,
         source: message.source,

@@ -282,3 +282,31 @@ typedef enum {
   LoadPageFault = 13,
   StoreAmoPageFault = 15
 } CauseException deriving(Bits);
+
+// To support late issue, an instruction must have no side effect like exception or control flow
+// indirection, it's program counter must also be correctly predicted
+function Bool supportLateIssue(Operation opcode, Bit#(32) pc, Bit#(32) predPc);
+  return case (opcode) matches
+    Lui:    pc + 4 == predPc;
+    Auipc:  pc + 4 == predPc;
+    Add:    pc + 4 == predPc;
+    Slt:    pc + 4 == predPc;
+    Sltu:   pc + 4 == predPc;
+    And:    pc + 4 == predPc;
+    Or:     pc + 4 == predPc;
+    Xor:    pc + 4 == predPc;
+    Sll:    pc + 4 == predPc;
+    Sra:    pc + 4 == predPc;
+    Srl:    pc + 4 == predPc;
+    Sub:    pc + 4 == predPc;
+    //Div:    True;
+    //Divu:   True;
+    //Rem:    True;
+    //Remu:   True;
+    //Mul:    True;
+    //Mulh:   True;
+    //Mulhu:  True;
+    //Mulhsu: True;
+    default: False;
+  endcase;
+endfunction

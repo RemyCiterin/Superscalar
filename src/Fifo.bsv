@@ -297,8 +297,8 @@ module mkSizeTwoFifo(Fifo#(n, t)) provisos(Bits#(t, size_t));
     doDeq <= True;
   endmethod
 
-  method canEnq = !valid1 || !valid0;
-  method Action enq(t x) if (!valid1 || !valid0);
+  method canEnq = !valid1;
+  method Action enq(t x) if (!valid1);
     doEnq <= True;
     enqVal <= x;
   endmethod
