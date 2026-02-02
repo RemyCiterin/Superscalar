@@ -1,4 +1,6 @@
+import MultiRegFile :: *;
 import ForwardBRAM :: *;
+import RegFile :: *;
 import TLTypes :: *;
 import TLUtils :: *;
 import Vector :: *;
@@ -106,8 +108,10 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW));
   Fifo#(2, ChannelA#(32, 32, sizeW, sourceW, 0)) queueA <- mkFifo;
   Fifo#(2, ChannelD#(32, 32, sizeW, sourceW, 0)) queueD <- mkFifo;
 
-  Vector#(NumWays, FORWARD_BRAM#(Index, Maybe#(Tag))) tagRams <-
-    replicateM(mkForwardBRAMCore((2 ** valueof(IndexW))));
+  Vector#(NumWays, MultiRF#(1, 1, Index, Maybe#(Tag)))
+    tagRams <- replicateM(mkForwardMultiRF(0, fromInteger(2 ** valueof(IndexW) - 1)));
+
+  Vector#(NumWays, RegFile#(Index, Bool)) dirtyRams <- replicateM(mkRegFileFull);
 
   Vector#(NumWays, FORWARD_BRAM_BE#(Bit#(TAdd#(IndexW,OffsetW)), Bit#(32), 4)) dataRams <-
     replicateM(mkForwardBRAMCoreBE((2 ** valueof(IndexW)) * (2 ** valueof(OffsetW))));
@@ -136,26 +140,21 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW));
   Reg#(Index) initIndex <- mkReg(0);
 
   rule init if (state[0] == Init);
-    for (Integer i=0; i < ways; i = i + 1) tagRams[i].write(initIndex, Invalid);
+    for (Integer i=0; i < ways; i = i + 1) tagRams[i].writePorts[0].request(initIndex, Invalid);
+    for (Integer i=0; i < ways; i = i + 1) dirtyRams[i].upd(initIndex, False);
     if (initIndex + 1 == 0) state[0] <= Idle;
     initIndex <= initIndex + 1;
   endrule
 
-  Way way = randomWay;
-  Bit#(32) data = ?;
-  Bool hit = False;
-
-  for (Integer i=0; i < ways; i = i + 1) if (Valid(physical.tag) == tagRams[i].response) begin
-    data = dataRams[i].response;
-    way = fromInteger(i);
-    hit = True;
-  end
+  Reg#(Maybe#(Tag)) currentTag <- mkRegU;
+  Reg#(Bool) hit <- mkRegU;
+  Reg#(Way) way <- mkRegU;
 
   ////////////////////////////////////////////////////////////////////////////
   // Cache line refill/evict sequence
   ////////////////////////////////////////////////////////////////////////////
   rule mis if (state[0] == Lookup && !hit && queueA.canEnq);
-    if (tagRams[way].response matches tagged Valid .t) begin
+    if (currentTag matches tagged Valid .t &&& dirtyRams[way].sub(physical.index)) begin
       //$display("evict");
       dataRams[way].read({ physical.index, 0 });
       state[0] <= Evict;
@@ -174,6 +173,8 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW));
         data: ?
       });
     end
+
+    dirtyRams[way].upd(physical.index, False);
   endrule
 
   rule send_beat if (state[0] == Evict);
@@ -221,11 +222,11 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW));
     offset <= offset + 1;
 
     if (offset + 1 == 0) begin
-      tagRams[way].write(physical.index, Valid(physical.tag));
+      tagRams[way].writePorts[0].request(physical.index, Valid(physical.tag));
 
+      hit <= True;
       for (Integer i=0; i < ways; i = i + 1) begin
         dataRams[i].read({ physical.index, physical.offset });
-        tagRams[i].read(physical.index);
       end
 
       //$display("finish refill");
@@ -236,7 +237,7 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW));
   ////////////////////////////////////////////////////////////////////////////
   // Respond in case of a cache hit or after evict/refill
   ////////////////////////////////////////////////////////////////////////////
-  method Bit#(32) response = data;
+  method Bit#(32) response = dataRams[way].response;
 
   method Bool valid = state[0] == Lookup && hit;
 
@@ -246,6 +247,7 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW));
 
     if (commit && request.opcode == St) begin
       dataRams[way].write(request.mask, { physical.index, physical.offset }, request.data);
+      dirtyRams[way].upd(physical.index, True);
     end
   endmethod
 
@@ -257,11 +259,25 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW));
     Physical phys = unpack(req.address);
     randomWay <= randomWay + 1;
 
+    Vector#(NumWays, Maybe#(Tag)) tags = newVector;
+    Bool found = False;
+    Way w = randomWay;
+
     for (Integer i=0; i < ways; i = i + 1) begin
       dataRams[i].read({ phys.index, phys.offset });
-      tagRams[i].read(phys.index);
+
+      Maybe#(Tag) tag <- tagRams[i].readPorts[0].request(phys.index);
+      tags[i] = tag;
+
+      if (tag == Valid(phys.tag)) begin
+        w = fromInteger(i);
+        found = True;
+      end
     end
 
+    way <= w;
+    hit <= found;
+    currentTag <= tags[w];
     state[1] <= Lookup;
     physical <= phys;
     request <= req;

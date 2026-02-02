@@ -111,13 +111,16 @@ pub inline fn custom_insn2(
 
 var kalloc: Allocator = undefined;
 
+const Ctx = struct {
+    const N = 50;
+    var A: [N * N]isize = undefined;
+    var B: [N * N]isize = .{0} ** (N * N);
+    var C: [N * N]isize = undefined;
+};
+
 pub export fn kernel_main() align(16) callconv(.C) void {
     const logger = std.log.scoped(.kernel);
     logger.info("=== Start DOoOM ===", .{});
-
-    logger.info(
-        \\Ethernet test started!
-    , .{});
 
     const kalloc_len = 28 * 1024 * 1024;
     var kernel_fba = std.heap.FixedBufferAllocator.init(kalloc_buffer[0..kalloc_len]);
@@ -127,23 +130,19 @@ pub export fn kernel_main() align(16) callconv(.C) void {
         \\Kernel allocator initialized!
     , .{});
 
-    var A: [64]isize = undefined;
-    var B: [64]isize = .{0} ** 64;
-    var C: [64]isize = undefined;
+    const n: usize = Ctx.N;
 
-    const n: usize = 8;
+    for (0..n * n) |i| Ctx.A[i] = @intCast(i);
 
-    for (0..n * n) |i| A[i] = @intCast(i);
-
-    for (0..n) |i| B[i * n + i] = 1;
+    for (0..n) |i| Ctx.B[i * n + i] = 1;
 
     asm volatile ("fence" ::: "memory");
-    matmul(n, &A, &B, &C);
+    matmul_blocks(n, &Ctx.A, &Ctx.B, &Ctx.C);
     asm volatile ("fence" ::: "memory");
 
     for (0..n) |i| {
         for (0..n) |j| {
-            UART.writer.print("{}\t", .{C[i * n + j]}) catch unreachable;
+            UART.writer.print("{}\t", .{Ctx.C[i * n + j]}) catch unreachable;
         }
 
         UART.writer.print("\n", .{}) catch unreachable;
@@ -173,6 +172,38 @@ pub fn matmul(
             }
 
             C[i * n + j] = sum;
+        }
+    }
+}
+
+pub fn matmul_blocks(
+    n: usize,
+    A: []volatile isize,
+    B: []volatile isize,
+    C: []volatile isize,
+) void {
+    const bsize = 32;
+    const blocks = (n + bsize - 1) / bsize;
+
+    for (0..blocks) |I| {
+        for (0..blocks) |J| {
+            for (0..blocks) |K| {
+                const maxi = @min(n, (I + 1) * bsize);
+                const maxj = @min(n, (J + 1) * bsize);
+                const maxk = @min(n, (K + 1) * bsize);
+
+                for (I * bsize..maxi) |i| {
+                    for (J * bsize..maxj) |j| {
+                        var sum: isize = 0;
+
+                        for (K * bsize..maxk) |k| {
+                            sum += A[i * n + k] * B[k * n + j];
+                        }
+
+                        C[i * n + j] += sum;
+                    }
+                }
+            }
         }
     }
 }

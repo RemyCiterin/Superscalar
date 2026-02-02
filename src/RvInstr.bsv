@@ -51,7 +51,8 @@ typedef enum {
   Mul,
   Mulh,
   Mulhu,
-  Mulhsu
+  Mulhsu,
+  Fence
 } Operation deriving(Bits, FShow, Eq);
 
 typedef struct {

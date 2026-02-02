@@ -26,8 +26,8 @@ interface CommitIfc;
 endinterface
 
 interface WriteBackIfc;
+  (* always_ready *) method RvInstr instr;
   (* always_ready *) method Bit#(32) result;
-  (* always_ready *) method ArchReg destination;
   (* always_ready *) method Bool valid;
   method Action deq;
 endinterface
@@ -60,7 +60,7 @@ interface ExecIfc#(numeric type numFwd, numeric type numWakeup);
 endinterface
 
 (* synthesize *)
-module mkExecAlu#(Bool lateAlu) (ExecIfc#(1, TAdd#(1,TMul#(2, SupSize))));
+module mkExecAlu#(Bool lateAlu) (ExecIfc#(1, TMul#(2, SupSize)));
   let alu1 <- mkAlu(True, True, True);
   Reg#(AluRequest) request1 <- mkRegU;
   Reg#(Epoch) epoch1 <- mkRegU;
@@ -72,7 +72,7 @@ module mkExecAlu#(Bool lateAlu) (ExecIfc#(1, TAdd#(1,TMul#(2, SupSize))));
   Reg#(ArchReg) rd2 <- mkRegU;
   Reg#(Bool) late2 <- mkRegU;
 
-  Vector#(TAdd#(1,TMul#(2, SupSize)), RWire#(Tuple2#(ArchReg, Bit#(32))))
+  Vector#(TMul#(2, SupSize), RWire#(Tuple2#(ArchReg, Bit#(32))))
     wakeupWires <- replicateM(mkRWire);
 
   Reg#(Maybe#(Bit#(32))) rs1_stage1[2] <- mkCReg(2, Invalid);
@@ -91,7 +91,7 @@ module mkExecAlu#(Bool lateAlu) (ExecIfc#(1, TAdd#(1,TMul#(2, SupSize))));
     Maybe#(Bit#(32)) op3 = rs1_stage2[0];
     Maybe#(Bit#(32)) op4 = rs2_stage2[0];
 
-    for (Integer i=0; i < 2*supSize+1; i = i + 1) begin
+    for (Integer i=0; i < 2*supSize; i = i + 1) begin
       if (wakeupWires[i].wget matches tagged Valid {.r, .d}) begin
         if (r == request1.instr.rs1) op1 = Valid(d);
         if (r == request1.instr.rs2) op2 = Valid(d);
@@ -106,9 +106,9 @@ module mkExecAlu#(Bool lateAlu) (ExecIfc#(1, TAdd#(1,TMul#(2, SupSize))));
     rs2_stage2[0] <= op4;
   endrule
 
-  Vector#(TAdd#(TMul#(2, SupSize), 1), WakeupIfc) wakeupIfc = newVector;
+  Vector#(TMul#(2, SupSize), WakeupIfc) wakeupIfc = newVector;
 
-  for (Integer i=0; i < 2*supSize+1; i = i + 1) begin
+  for (Integer i=0; i < 2*supSize; i = i + 1) begin
     wakeupIfc[i] = interface WakeupIfc;
       method Action request(ArchReg r, Bit#(32) d);
         if (r != 0) wakeupWires[i].wset(tuple2(r, d));
@@ -157,9 +157,9 @@ module mkExecAlu#(Bool lateAlu) (ExecIfc#(1, TAdd#(1,TMul#(2, SupSize))));
   endinterface);
 
   interface WriteBackIfc writeBack;
-    method destination = rd2;
     method valid = valid2[0] && isJust(rs1_stage2[0]) && isJust(rs2_stage2[0]);
     method result = late2 && lateAlu ? execAlu(updated_request2, False).rd : value2;
+    method instr = request2.instr;
 
     method Action deq if (valid2[0] && isJust(rs1_stage2[0]) && isJust(rs2_stage2[0]));
       valid2[0] <= False;
@@ -186,7 +186,7 @@ module mkLsu(LsuIfc);
   Bit#(32) maxDmemAddr = 'h80000000 + 'hFFFFF;
 
   BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
-    mkBRAMCore1BELoad('hFFFFF, False, "Mem32.hex", False);
+    mkBRAMCore1BELoad('hFFFF, False, "Mem32.hex", False);
 
   TLSlave#(32, 32, 8, 8, 0) slave <- mkTLBram('h80000000, 'hFFFFF, dmem);
 
@@ -194,12 +194,12 @@ module mkLsu(LsuIfc);
 
   mkConnection(cache.master, slave);
 
-  Fifo#(1, Tuple2#(LsuRequest, ArchReg)) buffer <- mkBypassFifo;
+  Fifo#(1, Tuple2#(LsuRequest, RvInstr)) buffer <- mkBypassFifo;
   Reg#(LsuRequest) request2 <- mkRegU;
-  Reg#(ArchReg) dest2 <- mkRegU;
+  Reg#(RvInstr) instr2 <- mkRegU;
 
   rule enq_stage2;
-    match {.req, .rd} = buffer.first;
+    match {.req, .instr} = buffer.first;
 
     cache.lookup(DCacheReq{
       opcode: req.store ? St : Ld,
@@ -209,8 +209,8 @@ module mkLsu(LsuIfc);
       amo: ?
     });
 
+    instr2 <= instr;
     request2 <= req;
-    dest2 <= rd;
     buffer.deq;
   endrule
 
@@ -235,7 +235,7 @@ module mkLsu(LsuIfc);
 
       method Action commit(Bool keep) if (valid1[0] && buffer.canEnq);
         if (keep) begin
-          buffer.enq(tuple2(getLsuRequest(request1), request1.instr.rd));
+          buffer.enq(tuple2(getLsuRequest(request1), request1.instr));
         end
         valid1[0] <= False;
       endmethod
@@ -245,8 +245,8 @@ module mkLsu(LsuIfc);
 
     interface WriteBackIfc writeBack;
       method result = lsuRequestRd(request2, cache.response);
-      method destination = dest2;
       method valid = cache.valid;
+      method instr = instr2;
 
       method Action deq if (cache.valid);
         let address = (request2.address - 'h80000000) >> 2;
@@ -278,6 +278,7 @@ endinterface
 module mkCPU(CpuIfc);
   Bool debug = False;
   Bool lateAlu = False;
+  Bool useForwarding = True;
 
   Reg#(Bit#(32)) cycle <- mkReg(0);
 
@@ -289,7 +290,7 @@ module mkCPU(CpuIfc);
 
   Reg#(Bit#(32)) scoreboard[3] <- mkCReg(3, 0);
 
-  MultiRF#(TMul#(2, SupSize), TAdd#(1,SupSize), ArchReg, Bit#(32))
+  MultiRF#(TMul#(2, SupSize), SupSize, ArchReg, Bit#(32))
     regFile <- mkForwardMultiRF(0, 31);
 
   List#(RWire#(Tuple2#(ArchReg, Bit#(32))))
@@ -306,7 +307,7 @@ module mkCPU(CpuIfc);
   DispatchBuffer inBuffer <- mkDispatchBuffer;
   DispatchBuffer outBuffer <- mkDispatchBuffer;
 
-  Vector#(SupSize, ExecIfc#(1, TAdd#(1, TMul#(2, SupSize)))) alu <- replicateM(mkExecAlu(lateAlu));
+  Vector#(SupSize, ExecIfc#(1, TMul#(2, SupSize))) alu <- replicateM(mkExecAlu(lateAlu));
 
   function Action wakeup(Integer i, ArchReg r, Bit#(32) d);
     action
@@ -337,42 +338,37 @@ module mkCPU(CpuIfc);
     inBuffer.put(data);
   endrule
 
-  rule forward;
+  if (useForwarding) rule forward;
     for (Integer i=0; i < supSize; i = i + 1) begin
       ForwardIfc fwd = alu[i].forward[0];
 
       if (fwd.valid && fwd.epoch == epoch[0] && fwd.destination != 0) begin
         forwarding[i].wset(tuple2(fwd.destination, fwd.result));
-        wakeup(supSize+1+i, fwd.destination, fwd.result);
+        wakeup(supSize+i, fwd.destination, fwd.result);
       end
     end
   endrule
 
   rule writeBackRl;
+    Bool useMem = False;
     Bit#(32) score = scoreboard[0];
-    WriteBackIfc wb = lsu.writeBack;
-
-    if (wb.valid) begin
-      if (wb.destination != 0) regFile.writePorts[0].request(wb.destination, wb.result);
-      wakeup(0, wb.destination, wb.result);
-      score[wb.destination] = 0;
-      wb.deq;
-
-      if (debug && wb.destination != 0)
-        $display("      ", showReg(wb.destination), " <= %h", wb.result);
-    end
 
     for (Integer i=0; i < supSize; i = i + 1) begin
-      wb = alu[i].writeBack;
+      WriteBackIfc wb = alu[i].writeBack;
 
-      if (wb.valid) begin
-        if (wb.destination != 0) regFile.writePorts[i+1].request(wb.destination, wb.result);
-        wakeup(i+1, wb.destination, wb.result);
-        score[wb.destination] = 0;
+      Bool rdy = wb.valid;
+      if (wb.instr.isMemAccess && useMem) rdy = False;
+      if (wb.instr.isMemAccess && !lsu.writeBack.valid) rdy = False;
+
+      if (rdy) begin
+        ArchReg rd = wb.instr.isMemAccess ? lsu.writeBack.instr.rd : wb.instr.rd;
+        Bit#(32) result = wb.instr.isMemAccess ? lsu.writeBack.result : wb.result;
+        if (rd != 0) regFile.writePorts[i].request(rd, result);
+        if (wb.instr.isMemAccess) lsu.writeBack.deq;
+        if (wb.instr.isMemAccess) useMem = True;
+        wakeup(i, rd, result);
+        score[rd] = 0;
         wb.deq;
-
-        if (debug && wb.destination != 0)
-          $display("      ", showReg(wb.destination), " <= %h", wb.result);
       end
     end
 
@@ -443,7 +439,7 @@ module mkCPU(CpuIfc);
       if (rdy) begin
         consumed[i] = True;
         instrCounter = instrCounter + 1;
-        alu[i].commit.commit(!instr.isMemAccess && !exception);
+        alu[i].commit.commit(!exception);
 
         if (debug) $display(cycle, " commit 0x%h: ", pc, showRvInstr(instr));
 
