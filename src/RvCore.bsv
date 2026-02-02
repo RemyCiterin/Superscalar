@@ -103,19 +103,20 @@ module mkExecAlu(ExecIfc#(1));
 endmodule
 
 interface LsuIfc;
-  (* always_ready *) method Bool canPut;
-  method Action put(LsuRequest req, ArchReg rd);
+  interface ExecIfc#(0) exec;
 
-  method Action deq(Bool commit);
-  (* always_ready *) method CauseException cause;
-  (* always_ready *) method ArchReg destination;
-  (* always_ready *) method Bool exception;
-  (* always_ready *) method Bit#(32) read;
-  (* always_ready *) method Bool canDeq;
+  (* always_ready, always_enabled *)
+  method Bit#(1) transmit;
 endinterface
 
 (* synthesize *)
 module mkLsu(LsuIfc);
+  Reg#(Bool) valid1[2] <- mkCReg(2, False);
+  Reg#(AluRequest) request1 <- mkRegU;
+  Reg#(Bit#(32)) pc1 <- mkRegU;
+  Reg#(Epoch) epoch1 <- mkRegU;
+
+  TxUART txUart <- mkTxUART(25_000_000 / 115200);
   Bit#(32) minDmemAddr = 'h80000000;
   Bit#(32) maxDmemAddr = 'h80000000 + 'hFFFFF;
 
@@ -128,105 +129,67 @@ module mkLsu(LsuIfc);
 
   mkConnection(cache.master, slave);
 
-  Reg#(LsuRequest) request <- mkRegU;
-  Reg#(ArchReg) dest <- mkRegU;
+  Reg#(LsuRequest) request2 <- mkRegU;
+  Reg#(ArchReg) dest2 <- mkRegU;
 
-  method Bool canPut = cache.canLookup;
-  method Action put(LsuRequest req, ArchReg rd) if (cache.canLookup);
-    //let address = (req.address - 'h80000000) >> 2;
-
-    //if (minDmemAddr <= req.address && req.address <= maxDmemAddr) dmem.read(address);
-
-    cache.lookup(DCacheReq{
-      opcode: req.store ? St : Ld,
-      mask: lsuRequestMask(req),
-      data: lsuRequestData(req),
-      address: req.address,
-      amo: ?
-    });
-
-    request <= req;
-    dest <= rd;
-  endmethod
-
-  method destination = dest;
-  method exception = !lsuRequestAligned(request);
-  method cause = request.store ? StoreAmoAddressMisaligned : LoadAddressMisaligned;
-  method Bit#(32) read = lsuRequestRd(request, cache.response);
-  method Bool canDeq = cache.valid;
-
-  method Action deq(Bool commit);
-    let address = (request.address - 'h80000000) >> 2;
-    let mask = lsuRequestMask(request);
-    let data = lsuRequestData(request);
-
-    cache.deq(commit);
-    if (commit && request.store) begin
-      //if (minDmemAddr <= request.address && request.address <= maxDmemAddr) begin
-      //  //$display("        mem[%h] <= %h if %b", request.address, data, mask);
-      //  dmem.write(mask, address, data);
-      //end
-
-      if (request.address == 'h10000000 && mask[0] == 1) begin
-        $write("%c", data[7:0]);
-        //txUart.put(data[7:0]);
-        $fflush(stdout);
-      end
-    end
-
-  endmethod
-endmodule
-
-
-(* synthesize *)
-module mkExecLsu(ExecIfc#(1));
-  Reg#(Bit#(32)) pc1 <- mkRegU;
-  Reg#(Epoch) epoch1 <- mkRegU;
-  let lsu <- mkLsu;
-
-  Reg#(Bool) valid2[2] <- mkCReg(2, False);
-  Reg#(Bit#(32)) result2 <- mkRegU;
-  Reg#(ArchReg) rd2 <- mkRegU;
-
-  method canEnter = lsu.canPut;
-  method Action enter(AluRequest req, Epoch epoch);
-    lsu.put(getLsuRequest(req), req.instr.rd);
-    epoch1 <= epoch;
-    pc1 <= req.pc;
-  endmethod
-
-  interface CommitIfc commit;
-    method nextPc = pc1 + 4;
-    method valid = lsu.canDeq && !valid2[1];
-    method exception = lsu.exception;
-    method cause = lsu.cause;
-
-    method Action commit(Bool keep) if (lsu.canDeq && !valid2[1]);
-      if (keep) valid2[1] <= True;
-      rd2 <= lsu.destination;
-      result2 <= lsu.read;
-      lsu.deq(keep);
+  interface ExecIfc exec;
+    method canEnter = !valid1[1];
+    method Action enter(AluRequest req, Epoch epoch) if (!valid1[1]);
+      valid1[1] <= True;
+      request1 <= req;
+      epoch1 <= epoch;
+      pc1 <= req.pc;
     endmethod
-  endinterface
 
-  interface forward = vec(
-    interface ForwardIfc;
-      method valid = lsu.canDeq && !lsu.exception;
-      method destination = lsu.destination;
-      method result = lsu.read;
-      method epoch = epoch1;
+    interface CommitIfc commit;
+      method nextPc = pc1 + 4;
+      method cause =
+        request1.instr.opcode == Load ? LoadAddressMisaligned : StoreAmoAddressMisaligned;
+      method exception = !lsuRequestAligned(getLsuRequest(request1));
+      method valid = valid1[0] && cache.canLookup;
+
+      method Action commit(Bool keep) if (valid1[0] && cache.canLookup);
+        if (keep) begin
+          let req = getLsuRequest(request1);
+
+          cache.lookup(DCacheReq{
+            opcode: req.store ? St : Ld,
+            mask: lsuRequestMask(req),
+            data: lsuRequestData(req),
+            address: req.address,
+            amo: ?
+          });
+
+          dest2 <= request1.instr.rd;
+          request2 <= req;
+        end
+        valid1[0] <= False;
+      endmethod
     endinterface
-  );
 
-  interface WriteBackIfc writeBack;
-    method result = result2;
-    method destination = rd2;
-    method valid = valid2[0];
+    interface forward = newVector;
 
-    method Action deq if (valid2[0]);
-      valid2[0] <= False;
-    endmethod
+    interface WriteBackIfc writeBack;
+      method result = lsuRequestRd(request2, cache.response);
+      method destination = dest2;
+      method valid = cache.valid;
+
+      method Action deq if (cache.valid);
+        let address = (request2.address - 'h80000000) >> 2;
+        let mask = lsuRequestMask(request2);
+        let data = lsuRequestData(request2);
+
+        cache.deq(True);
+        if (request2.store && request2.address == 'h10000000 && mask[0] == 1) begin
+          $write("%c", data[7:0]);
+          //txUart.put(data[7:0]);
+          $fflush(stdout);
+        end
+      endmethod
+    endinterface
   endinterface
+
+  method transmit = txUart.transmit;
 endmodule
 
 interface CpuIfc;
@@ -240,8 +203,6 @@ endinterface
 (* synthesize *)
 module mkCPU(CpuIfc);
   Bool debug = False;
-
-  TxUART txUart <- mkTxUART(25_000_000 / 115200);
 
   Reg#(Bit#(32)) cycle <- mkReg(0);
 
@@ -257,7 +218,7 @@ module mkCPU(CpuIfc);
     regFile <- mkForwardMultiRF(0, 31);
 
   List#(RWire#(Tuple2#(ArchReg, Bit#(32))))
-    forwarding <- List::replicateM(2*supSize+1, mkRWire);
+    forwarding <- List::replicateM(2*supSize, mkRWire);
 
   Reg#(Epoch) epoch[2] <- mkCReg(2, 0);
 
@@ -272,7 +233,9 @@ module mkCPU(CpuIfc);
 
   Vector#(SupSize, ExecIfc#(1)) alu <- replicateM(mkExecAlu);
 
-  ExecIfc#(1) lsu <- mkExecLsu;
+  let lsu_ifc <- mkLsu;
+  let uart = lsu_ifc.transmit;
+  let lsu = lsu_ifc.exec;
 
   rule redirect;
     match {.pc, .epoch, .train} = redirectQ.first;
@@ -292,16 +255,11 @@ module mkCPU(CpuIfc);
   endrule
 
   rule forward;
-    ForwardIfc fwd = lsu.forward[0];
-
-    //if (fwd.valid && fwd.epoch == epoch[0] && fwd.destination != 0)
-    //  forwarding[0].wset(tuple2(fwd.destination, fwd.result));
-
     for (Integer i=0; i < supSize; i = i + 1) begin
-      fwd = alu[i].forward[0];
+      ForwardIfc fwd = alu[i].forward[0];
 
       if (fwd.valid && fwd.epoch == epoch[0] && fwd.destination != 0)
-        forwarding[i+1].wset(tuple2(fwd.destination, fwd.result));
+        forwarding[i].wset(tuple2(fwd.destination, fwd.result));
     end
   endrule
 
@@ -533,6 +491,6 @@ module mkCPU(CpuIfc);
     });
   endrule
 
-  method transmit = txUart.transmit;
+  method transmit = uart;
   method led = 0;
 endmodule

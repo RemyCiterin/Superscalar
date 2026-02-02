@@ -151,10 +151,9 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW));
     hit = True;
   end
 
-  rule show_lookup if (state[0] == Lookup);
-    //$display("lookup %d %d %h", hit, queueA.canEnq, queueA.first.address);
-  endrule
-
+  ////////////////////////////////////////////////////////////////////////////
+  // Cache line refill/evict sequence
+  ////////////////////////////////////////////////////////////////////////////
   rule mis if (state[0] == Lookup && !hit && queueA.canEnq);
     if (tagRams[way].response matches tagged Valid .t) begin
       //$display("evict");
@@ -250,9 +249,11 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW));
     end
   endmethod
 
+  ////////////////////////////////////////////////////////////////////////////
+  // Enter a new request to the cache
+  ////////////////////////////////////////////////////////////////////////////
   method Bool canLookup = state[1] == Idle;
   method Action lookup(DCacheReq req) if (state[1] == Idle);
-    //$display("lookup %d %h %h %b", req.opcode == St, req.address, req.data, req.mask);
     Physical phys = unpack(req.address);
     randomWay <= randomWay + 1;
 
@@ -266,6 +267,9 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW));
     request <= req;
   endmethod
 
+  ////////////////////////////////////////////////////////////////////////////
+  // Memory interface
+  ////////////////////////////////////////////////////////////////////////////
   interface TLMaster master;
     interface channelA = toFifoO(queueA);
     interface channelB = nullFifoI;
