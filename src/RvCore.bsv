@@ -39,13 +39,9 @@ interface ForwardIfc;
   (* always_ready *) method Bool valid;
 endinterface
 
-interface WakeupIfc;
-  (* always_ready *) method Action request(ArchReg r, Bit#(32) d);
-endinterface
-
-interface ExecIfc#(numeric type numFwd, numeric type numWakeup);
+interface ExecIfc#(numeric type numFwd);
   // Stage 1: put an alu request to the
-  method Action enter(AluRequest alu, Bool rdy1, Bool rdy2, Epoch epoch);
+  method Action enter(AluRequest alu, Epoch epoch);
   method Bool canEnter;
 
   // Stage 2: resolve control flow
@@ -55,76 +51,20 @@ interface ExecIfc#(numeric type numFwd, numeric type numWakeup);
   interface WriteBackIfc writeBack;
 
   interface Vector#(numFwd, ForwardIfc) forward;
-
-  interface Vector#(numWakeup, WakeupIfc) wakeup;
 endinterface
 
 (* synthesize *)
-module mkExecAlu#(Bool lateAlu) (ExecIfc#(1, TMul#(2, SupSize)));
+module mkExecAlu(ExecIfc#(1));
   let alu1 <- mkAlu(True, True, True);
   Reg#(AluRequest) request1 <- mkRegU;
   Reg#(Epoch) epoch1 <- mkRegU;
-  Reg#(Bool) late1 <- mkRegU;
 
   Reg#(Bool) valid2[2] <- mkCReg(2, False);
   Reg#(AluRequest) request2 <- mkRegU;
   Reg#(Bit#(32)) value2 <- mkRegU;
-  Reg#(ArchReg) rd2 <- mkRegU;
-  Reg#(Bool) late2 <- mkRegU;
-
-  Vector#(TMul#(2, SupSize), RWire#(Tuple2#(ArchReg, Bit#(32))))
-    wakeupWires <- replicateM(mkRWire);
-
-  Reg#(Maybe#(Bit#(32))) rs1_stage1[2] <- mkCReg(2, Invalid);
-  Reg#(Maybe#(Bit#(32))) rs2_stage1[2] <- mkCReg(2, Invalid);
-  Reg#(Maybe#(Bit#(32))) rs1_stage2[2] <- mkCReg(2, Invalid);
-  Reg#(Maybe#(Bit#(32))) rs2_stage2[2] <- mkCReg(2, Invalid);
-
-  AluRequest updated_request2 = request2;
-  updated_request2.rs1 = unJust(rs1_stage2[0]);
-  updated_request2.rs2 = unJust(rs2_stage2[0]);
-
-  (* no_implicit_conditions, fire_when_enabled *)
-  rule wakeup_canon;
-    Maybe#(Bit#(32)) op1 = rs1_stage1[0];
-    Maybe#(Bit#(32)) op2 = rs2_stage1[0];
-    Maybe#(Bit#(32)) op3 = rs1_stage2[0];
-    Maybe#(Bit#(32)) op4 = rs2_stage2[0];
-
-    for (Integer i=0; i < 2*supSize; i = i + 1) begin
-      if (wakeupWires[i].wget matches tagged Valid {.r, .d}) begin
-        if (r == request1.instr.rs1) op1 = Valid(d);
-        if (r == request1.instr.rs2) op2 = Valid(d);
-        if (r == request2.instr.rs1) op3 = Valid(d);
-        if (r == request2.instr.rs2) op4 = Valid(d);
-      end
-    end
-
-    rs1_stage1[0] <= op1;
-    rs2_stage1[0] <= op2;
-    rs1_stage2[0] <= op3;
-    rs2_stage2[0] <= op4;
-  endrule
-
-  Vector#(TMul#(2, SupSize), WakeupIfc) wakeupIfc = newVector;
-
-  for (Integer i=0; i < 2*supSize; i = i + 1) begin
-    wakeupIfc[i] = interface WakeupIfc;
-      method Action request(ArchReg r, Bit#(32) d);
-        if (r != 0) wakeupWires[i].wset(tuple2(r, d));
-      endmethod
-    endinterface;
-  end
-
-  interface wakeup = wakeupIfc;
 
   method canEnter = alu1.canEnter;
-  method Action enter(AluRequest req, Bool rdy1, Bool rdy2, Epoch ep);
-    dynamicAssert(rdy1 || supportLateIssue(req.instr.opcode), "");
-    dynamicAssert(rdy2 || supportLateIssue(req.instr.opcode), "");
-    rs1_stage1[1] <= rdy1 ? Valid(req.rs1) : Invalid;
-    rs2_stage1[1] <= rdy2 ? Valid(req.rs2) : Invalid;
-    late1 <= !rdy1 || !rdy2;
+  method Action enter(AluRequest req, Epoch ep);
     alu1.enter(req);
     request1 <= req;
     epoch1 <= ep;
@@ -132,43 +72,39 @@ module mkExecAlu#(Bool lateAlu) (ExecIfc#(1, TMul#(2, SupSize)));
 
   interface CommitIfc commit;
     method valid = alu1.canDeq && !valid2[1];
-    method exception = late1 && lateAlu ? False : alu1.response.exception;
-    method nextPc = late1 && lateAlu ? request1.pc+4 : alu1.response.pc;
-    method cause = late1 && lateAlu ? (?) : alu1.response.cause;
+    method exception = alu1.response.exception;
+    method nextPc = alu1.response.pc;
+    method cause = alu1.response.cause;
 
     method Action commit(Bool keep) if (alu1.canDeq && !valid2[1]);
       if (keep) valid2[1] <= True;
       value2 <= alu1.response.rd;
-      rd2 <= request1.instr.rd;
-      late2 <= late1;
+      request2 <= request1;
       alu1.deq;
 
-      rs1_stage2[1] <= rs1_stage1[1];
-      rs2_stage2[1] <= rs2_stage1[1];
-      request2 <= request1;
     endmethod
   endinterface
 
   interface forward = vec(interface ForwardIfc;
-    method valid = alu1.canDeq && !request1.instr.isMemAccess && !(late1 && lateAlu);
+    method valid = alu1.canDeq && !request1.instr.isMemAccess;
     method destination = request1.instr.rd;
     method result = alu1.response.rd;
     method epoch = epoch1;
   endinterface);
 
   interface WriteBackIfc writeBack;
-    method valid = valid2[0] && isJust(rs1_stage2[0]) && isJust(rs2_stage2[0]);
-    method result = late2 && lateAlu ? execAlu(updated_request2, False).rd : value2;
     method instr = request2.instr;
+    method valid = valid2[0];
+    method result = value2;
 
-    method Action deq if (valid2[0] && isJust(rs1_stage2[0]) && isJust(rs2_stage2[0]));
+    method Action deq if (valid2[0]);
       valid2[0] <= False;
     endmethod
   endinterface
 endmodule
 
 interface LsuIfc;
-  interface ExecIfc#(0, 0) exec;
+  interface ExecIfc#(0) exec;
 
   (* always_ready, always_enabled *)
   method Bit#(1) transmit;
@@ -215,11 +151,8 @@ module mkLsu(LsuIfc);
   endrule
 
   interface ExecIfc exec;
-    interface wakeup = newVector;
-
     method canEnter = !valid1[1];
-    method Action enter(AluRequest req, Bool rdy1, Bool rdy2, Epoch epoch) if (!valid1[1]);
-      dynamicAssert(rdy1 && rdy2, "operands must be ready to entern into the LSU");
+    method Action enter(AluRequest req, Epoch epoch) if (!valid1[1]);
       valid1[1] <= True;
       request1 <= req;
       epoch1 <= epoch;
@@ -277,7 +210,6 @@ endinterface
 (* synthesize *)
 module mkCPU(CpuIfc);
   Bool debug = False;
-  Bool lateAlu = False;
   Bool useForwarding = True;
 
   Reg#(Bit#(32)) cycle <- mkReg(0);
@@ -307,15 +239,7 @@ module mkCPU(CpuIfc);
   DispatchBuffer inBuffer <- mkDispatchBuffer;
   DispatchBuffer outBuffer <- mkDispatchBuffer;
 
-  Vector#(SupSize, ExecIfc#(1, TMul#(2, SupSize))) alu <- replicateM(mkExecAlu(lateAlu));
-
-  function Action wakeup(Integer i, ArchReg r, Bit#(32) d);
-    action
-      if (lateAlu) begin
-        for (Integer j=0; j < supSize; j = j + 1) alu[j].wakeup[i].request(r, d);
-      end
-    endaction
-  endfunction
+  Vector#(SupSize, ExecIfc#(1)) alu <- replicateM(mkExecAlu);
 
   let lsu_ifc <- mkLsu;
   let uart = lsu_ifc.transmit;
@@ -344,7 +268,6 @@ module mkCPU(CpuIfc);
 
       if (fwd.valid && fwd.epoch == epoch[0] && fwd.destination != 0) begin
         forwarding[i].wset(tuple2(fwd.destination, fwd.result));
-        wakeup(supSize+i, fwd.destination, fwd.result);
       end
     end
   endrule
@@ -366,7 +289,6 @@ module mkCPU(CpuIfc);
         if (rd != 0) regFile.writePorts[i].request(rd, result);
         if (wb.instr.isMemAccess) lsu.writeBack.deq;
         if (wb.instr.isMemAccess) useMem = True;
-        wakeup(i, rd, result);
         score[rd] = 0;
         wb.deq;
 
@@ -514,8 +436,8 @@ module mkCPU(CpuIfc);
       if (rs1 == 0) op1 = 0;
       if (rs2 == 0) op2 = 0;
 
-      Bool rdy1 = score[rs1] == 0;
-      Bool rdy2 = score[rs2] == 0;
+      Bool rdy1 = scoreboard[2][rs1] == 0;
+      Bool rdy2 = scoreboard[2][rs2] == 0;
 
       for (Integer j=0; j < List::length(forwarding); j = j + 1) begin
         if (forwarding[j].wget matches tagged Valid {.r, .d} &&& r == rs1) begin
@@ -529,7 +451,7 @@ module mkCPU(CpuIfc);
         end
       end
 
-      Bool rdy = score[rd] == 0;
+      Bool rdy = scoreboard[2][rd] == 0;
 
       for (Integer j=0; j < i; j = j + 1) if (inBuffer.mask[j]) begin
         if (rs1 != 0 && rs1 == inBuffer.instr[j].rd) rdy1 = False;
@@ -537,11 +459,7 @@ module mkCPU(CpuIfc);
         if (rd != 0 && rd == inBuffer.instr[j].rd) rdy = False;
       end
 
-      if (lateAlu) begin
-        if ((!rdy1 || !rdy2) && !supportLateIssue(instr.opcode)) rdy = False;
-      end else begin
-        if (!rdy1 || !rdy2) rdy = False;
-      end
+      if (!rdy1 || !rdy2) rdy = False;
 
       if (!lsu.canEnter && instr.isMemAccess) rdy = False;
       if (useMem && instr.isMemAccess) rdy = False;
@@ -560,10 +478,10 @@ module mkCPU(CpuIfc);
           pc: pc
         };
 
-        alu[i].enter(aluReq, rdy1, rdy2, inBuffer.epoch);
+        alu[i].enter(aluReq, inBuffer.epoch);
 
         if (instr.isMemAccess) begin
-          lsu.enter(aluReq, rdy1, rdy2, inBuffer.epoch);
+          lsu.enter(aluReq, inBuffer.epoch);
           useMem = True;
         end
       end
