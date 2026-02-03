@@ -2,6 +2,8 @@ import RvInstr::*;
 import MulDiv::*;
 
 import BuildList::*;
+//import BitUtils::*;
+//import BUtils::*;
 
 interface AluIfc;
   (* always_ready *) method Bool canEnter;
@@ -105,21 +107,41 @@ function AluResponse execAlu(AluRequest req, Bool branch);
   let pc = req.pc;
 
   let rd = case (req.instr.opcode) matches
-    Lui   : imm;
-    Auipc : pc + imm;
-    Jalr  : req.pc + 4;
-    Jal   : req.pc + 4;
-    Add   : rs1 + rs2orImm;
-    Sub   : rs1 - rs2orImm;
-    And   : rs1 & rs2orImm;
-    Or    : rs1 | rs2orImm;
-    Xor   : rs1 ^ rs2orImm;
-    Sltu  : rs1 < rs2orImm ? 1 : 0;
-    Slt   : srs1 < srs2orImm ? 1 : 0;
-    Sll   : rs1 << rs2orImm[4:0];
-    Srl   : rs1 >> rs2orImm[4:0];
-    Sra   : signedShiftRight(rs1, rs2orImm[4:0]);
-    .*    : 0;
+    Lui    : imm;
+    Auipc  : pc + imm;
+    Jalr   : req.pc + 4;
+    Jal    : req.pc + 4;
+    Add    : rs1 + rs2orImm;
+    Sub    : rs1 - rs2orImm;
+    And    : rs1 & rs2orImm;
+    Or     : rs1 | rs2orImm;
+    Xor    : rs1 ^ rs2orImm;
+    Sltu   : rs1 < rs2orImm ? 1 : 0;
+    Slt    : srs1 < srs2orImm ? 1 : 0;
+    Sll    : rs1 << rs2orImm[4:0];
+    Srl    : rs1 >> rs2orImm[4:0];
+    Sra    : signedShiftRight(rs1, rs2orImm[4:0]);
+    Sh1add : ((rs1 << 1) + rs2orImm);
+    Sh2add : ((rs1 << 2) + rs2orImm);
+    Sh3add : ((rs1 << 3) + rs2orImm);
+    Andn   : rs1 & ~rs2;
+    Orn    : rs1 | ~rs2;
+    Xnor   : ~(rs1 ^ rs2);
+    Clz    : countLeadingZeros(rs1);
+    Ctz    : countTrailingZeros(rs1);
+    Cpop   : countSetBits(rs1);
+    Max    : srs1 < srs2 ? rs2 : rs1;
+    Maxu   : rs1 < rs2 ? rs2 : rs1;
+    Min    : srs1 > srs2 ? rs2 : rs1;
+    Minu   : rs1 > rs2 ? rs2 : rs1;
+    Sextb  : signExtend(rs1[7:0]);
+    Sexth  : signExtend(rs1[15:0]);
+    Zexth  : zeroExtend(rs1[15:0]);
+    Rol    : ((rs1 << rs2[4:0]) | (rs1 >> (-rs2[4:0])));
+    Ror    : ((rs1 >> rs2orImm[4:0]) | (rs1 << (-rs2orImm[4:0])));
+    Orcb   : orCombine(rs1);
+    Rev8   : revBytes(rs1);
+    .*     : 0;
   endcase;
 
   let nextPc = case (req.instr.opcode) matches
@@ -141,6 +163,62 @@ function AluResponse execAlu(AluRequest req, Bool branch);
     pc: nextPc,
     rd: rd
   };
+endfunction
+
+function Bit#(n) countLeadingZeros(Bit#(n) x);
+  Bool found = False;
+  Bit#(n) ret = 0;
+
+  for (Integer i=0; i < valueof(n); i = i + 1) begin
+    found = found || x[valueof(n)-1-i] == 1;
+    ret = ret + 1;
+  end
+
+  return ret;
+endfunction
+
+function Bit#(n) countTrailingZeros(Bit#(n) x);
+  Bool found = False;
+  Bit#(n) ret = 0;
+
+  for (Integer i=0; i < valueof(n); i = i + 1) begin
+    found = found || x[i] == 1;
+    ret = ret + 1;
+  end
+
+  return ret;
+endfunction
+
+function Bit#(n) countSetBits(Bit#(n) x);
+  Bit#(n) ret = 0;
+
+  for (Integer i=0; i < valueof(n); i = i + 1) begin
+    if (x[i] == 1) ret = ret + 1;
+  end
+
+  return ret;
+endfunction
+
+function Bit#(32) orCombine(Bit#(32) x);
+  Bit#(32) ret = 0;
+
+  ret[7:0] = x[7:0] == 0 ? 0 : 'hFF;
+  ret[15:8] = x[15:8] == 0 ? 0 : 'hFF;
+  ret[23:16] = x[23:16] == 0 ? 0 : 'hFF;
+  ret[31:24] = x[31:24] == 0 ? 0 : 'hFF;
+
+  return ret;
+endfunction
+
+function Bit#(32) revBytes(Bit#(32) x);
+  Bit#(32) ret = 0;
+
+  ret[7:0] = x[31:24];
+  ret[15:8] = x[23:16];
+  ret[23:16] = x[15:8];
+  ret[31:24] = x[7:0];
+
+  return ret;
 endfunction
 
 typedef struct {

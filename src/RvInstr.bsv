@@ -52,7 +52,26 @@ typedef enum {
   Mulh,
   Mulhu,
   Mulhsu,
-  Fence
+  Sh1add,
+  Sh2add,
+  Sh3add,
+  Andn,
+  Orn,
+  Xnor,
+  Clz,
+  Ctz,
+  Cpop,
+  Max,
+  Maxu,
+  Min,
+  Minu,
+  Sextb,
+  Sexth,
+  Zexth,
+  Rol,
+  Ror,
+  Orcb,
+  Rev8
 } Operation deriving(Bits, FShow, Eq);
 
 typedef struct {
@@ -103,17 +122,25 @@ function RvInstr decodeRvInstr(Bit#(32) data);
   if (itype) begin
     imm = signExtend(data[31:20]);
 
-    operation = case (tuple3(opcode, funct7, funct3)) matches
-      {7'b0010011, .*, 3'b000} : Add;
-      {7'b0010011, .*, 3'b010} : Slt;
-      {7'b0010011, .*, 3'b011} : Sltu;
-      {7'b0010011, .*, 3'b111} : And;
-      {7'b0010011, .*, 3'b110} : Or;
-      {7'b0010011, .*, 3'b100} : Xor;
-      {7'b1100111, .*, 3'b000} : Jalr;
-      {7'b0010011, 7'b0000000, 3'b001} : Sll;
-      {7'b0010011, 7'b0000000, 3'b101} : Srl;
-      {7'b0010011, 7'b0100000, 3'b101} : Sra;
+    operation = case (tuple4(opcode, funct7, funct3, rs2)) matches
+      {7'b0010011, .*, 3'b000, .*} : Add;
+      {7'b0010011, .*, 3'b010, .*} : Slt;
+      {7'b0010011, .*, 3'b011, .*} : Sltu;
+      {7'b0010011, .*, 3'b111, .*} : And;
+      {7'b0010011, .*, 3'b110, .*} : Or;
+      {7'b0010011, .*, 3'b100, .*} : Xor;
+      {7'b1100111, .*, 3'b000, .*} : Jalr;
+      {7'b0010011, 7'b0110000, 3'b001, 5'b00000} : Clz;
+      {7'b0010011, 7'b0110000, 3'b001, 5'b00001} : Ctz;
+      {7'b0010011, 7'b0110000, 3'b001, 5'b00010} : Cpop;
+      {7'b0010011, 7'b0110000, 3'b001, 5'b00100} : Sextb;
+      {7'b0010011, 7'b0110000, 3'b001, 5'b00101} : Sexth;
+      {7'b0010011, 7'b0010100, 3'b101, 5'b00111} : Orcb;
+      {7'b0010011, 7'b0010100, 3'b101, 5'b11000} : Rev8;
+      {7'b0010011, 7'b0110000, 3'b101, .*} : Ror;
+      {7'b0010011, 7'b0000000, 3'b001, .*} : Sll;
+      {7'b0010011, 7'b0000000, 3'b101, .*} : Srl;
+      {7'b0010011, 7'b0100000, 3'b101, .*} : Sra;
       {7'b0000011, .*, .*} :
         funct3[1:0] == 'b11 || funct3 == 3'b110 ? Err : Load;
       .* : Err;
@@ -152,6 +179,19 @@ function RvInstr decodeRvInstr(Bit#(32) data);
 
   if (rtype) begin
     operation = case (tuple2(funct7, funct3)) matches
+      {7'b0000100, 3'b100} : rs2 == 0 ? Zexth : Err;
+      {7'b0110000, 3'b001} : Rol;
+      {7'b0110000, 3'b101} : Ror;
+      {7'b0000101, 3'b110} : Max;
+      {7'b0000101, 3'b111} : Maxu;
+      {7'b0000101, 3'b100} : Min;
+      {7'b0000101, 3'b101} : Minu;
+      {7'b0100000, 3'b111} : Andn;
+      {7'b0100000, 3'b110} : Orn;
+      {7'b0100000, 3'b100} : Xnor;
+      {7'b0010000, 3'b010} : Sh1add;
+      {7'b0010000, 3'b100} : Sh2add;
+      {7'b0010000, 3'b110} : Sh3add;
       {7'b0000001, 3'b000} : Mul;
       {7'b0000001, 3'b001} : Mulh;
       {7'b0000001, 3'b010} : Mulhsu;
@@ -225,6 +265,17 @@ function Fmt showRvInstr(RvInstr instr);
     Slt : $format("slt", showOp);
     Sltu : $format("sltu", showOp);
     And : $format("and", showOp);
+    Sh1add : $format("sh1add", showOp);
+    Sh2add : $format("sh2add", showOp);
+    Sh3add : $format("sh3add", showOp);
+    Mul : $format("mul", showOp);
+    Mulh : $format("mulh", showOp);
+    Mulhu : $format("mulhu", showOp);
+    Mulhsu : $format("mulhsu", showOp);
+    Div : $format("div", showOp);
+    Divu : $format("divu", showOp);
+    Rem : $format("rem", showOp);
+    Remu : $format("remu", showOp);
     Or : $format("or", showOp);
     Xor : $format("xor", showOp);
     Sll : $format("sll", showOp);
@@ -300,6 +351,9 @@ function Bool supportLateIssue(Operation opcode);
     Sra:    True;
     Srl:    True;
     Sub:    True;
+    Sh1add: True;
+    Sh2add: True;
+    Sh3add: True;
     //Div:    True;
     //Divu:   True;
     //Rem:    True;

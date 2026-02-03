@@ -112,7 +112,7 @@ pub inline fn custom_insn2(
 var kalloc: Allocator = undefined;
 
 const Ctx = struct {
-    const N = 50;
+    const N = 10;
     var A: [N * N]isize = undefined;
     var B: [N * N]isize = .{0} ** (N * N);
     var C: [N * N]isize = undefined;
@@ -137,7 +137,7 @@ pub export fn kernel_main() align(16) callconv(.C) void {
     for (0..n) |i| Ctx.B[i * n + i] = 1;
 
     asm volatile ("fence" ::: "memory");
-    matmul_blocks(n, &Ctx.A, &Ctx.B, &Ctx.C);
+    matmul(n, &Ctx.A, &Ctx.B, &Ctx.C);
     asm volatile ("fence" ::: "memory");
 
     for (0..n) |i| {

@@ -369,6 +369,10 @@ module mkCPU(CpuIfc);
         wakeup(i, rd, result);
         score[rd] = 0;
         wb.deq;
+
+        if (debug && rd != 0) begin
+          $display("        ", showReg(rd), " <= %h", result);
+        end
       end
     end
 
@@ -443,7 +447,7 @@ module mkCPU(CpuIfc);
 
         if (debug) $display(cycle, " commit 0x%h: ", pc, showRvInstr(instr));
 
-        if (outBuffer.exception[i]) $display("cycle: %d instret: %d", cycle, instret);
+        if (outBuffer.exception[i]) $display("pc: %h cycle: %d instret: %d", pc, cycle, instret);
 
         if (instr.isMemAccess) begin
           lsu.commit.commit(!exception);
