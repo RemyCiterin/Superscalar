@@ -14,13 +14,14 @@ A superscalar RISC-V CPU implementing rv32-im supporting Tiny Coupled memories.
 - Multiplication/Division (M extension)
 - Data cache (up to one instruction per cycle)
 - Bitmap extension (`Zba` and `Zbb`)
+- System registers (CSRs)
 
 ## TODO
 
 - optimize register to register moves: replacing `x1` by `x2` after a `mv x1,x2` is possible, but
     some other optimisations like replacing `x1` by `x0` after `xor x1,x2,x2` is not possible
     because of weak memory ordering dependencies
-- add system registers support (CSR file), with exceptions and interrupts
+- Exceptions and interrupts
 - add an instruction cache
 - atomic memory operations, opens the door to parallelism
 - cache coherence using TileLink

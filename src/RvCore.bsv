@@ -10,6 +10,7 @@ import RvFetch :: *;
 import Vector :: *;
 import Assert :: *;
 import RvAlu :: *;
+import RvCSR :: *;
 import UART :: *;
 import Fifo :: *;
 
@@ -86,7 +87,7 @@ module mkExecAlu(ExecIfc#(1));
   endinterface
 
   interface forward = vec(interface ForwardIfc;
-    method valid = alu1.canDeq && !request1.instr.isMemAccess;
+    method valid = alu1.canDeq && !request1.instr.isMemAccess && !request1.instr.isSystem;
     method destination = request1.instr.rd;
     method result = alu1.response.rd;
     method epoch = epoch1;
@@ -216,6 +217,11 @@ module mkCPU(CpuIfc);
 
   Reg#(Bit#(32)) instret <- mkReg(0);
 
+  let cycleCsr <- mkCycleCsr;
+  let instrCsr <- mkInstructionCounterCsr;
+  let system <- mkCsrUnit(List::append(cycleCsr, instrCsr.csrs));
+  Fifo#(1, Tuple2#(ArchReg, Bit#(32))) csrOut <- mkPipelineFifo;
+
   rule incrCycle;
     cycle <= cycle + 1;
   endrule
@@ -274,21 +280,37 @@ module mkCPU(CpuIfc);
 
   rule writeBackRl;
     Bool useMem = False;
+    Bool useSys = False;
     Bit#(32) score = scoreboard[0];
 
     for (Integer i=0; i < supSize; i = i + 1) begin
       WriteBackIfc wb = alu[i].writeBack;
 
       Bool rdy = wb.valid;
+      if (wb.instr.isSystem && useSys) rdy = False;
       if (wb.instr.isMemAccess && useMem) rdy = False;
+      if (wb.instr.isSystem && !csrOut.canDeq) rdy = False;
       if (wb.instr.isMemAccess && !lsu.writeBack.valid) rdy = False;
 
       if (rdy) begin
-        ArchReg rd = wb.instr.isMemAccess ? lsu.writeBack.instr.rd : wb.instr.rd;
-        Bit#(32) result = wb.instr.isMemAccess ? lsu.writeBack.result : wb.result;
+        Bit#(32) result = wb.result;
+        ArchReg rd = wb.instr.rd;
+
+        if (wb.instr.isMemAccess) begin
+          result = lsu.writeBack.result;
+          rd = lsu.writeBack.instr.rd;
+          lsu.writeBack.deq;
+          useMem = True;
+        end
+
+        if (wb.instr.isSystem) begin
+          result = csrOut.first.snd;
+          rd = csrOut.first.fst;
+          useSys = True;
+          csrOut.deq;
+        end
+
         if (rd != 0) regFile.writePorts[i].request(rd, result);
-        if (wb.instr.isMemAccess) lsu.writeBack.deq;
-        if (wb.instr.isMemAccess) useMem = True;
         score[rd] = 0;
         wb.deq;
 
@@ -306,6 +328,7 @@ module mkCPU(CpuIfc);
   rule flush if (outBuffer.mask != replicate(False) && outBuffer.epoch != epoch[0]);
     Bool stop = False;
     Bool useMem = False;
+    Bool useSys = False;
     Bit#(32) score = scoreboard[1];
     Super#(Bool) consumed = replicate(False);
 
@@ -313,14 +336,18 @@ module mkCPU(CpuIfc);
       RvInstr instr = outBuffer.instr[i];
 
       Bool rdy = alu[i].commit.valid;
+      if (instr.isSystem && useSys) rdy = False;
       if (instr.isMemAccess && useMem) rdy = False;
+      if (instr.isSystem && !system.canDeq) rdy = False;
       if (instr.isMemAccess && !lsu.commit.valid) rdy = False;
       if (!rdy) stop = True;
 
       if (rdy) begin
         score[instr.rd] = 0;
         if (instr.isMemAccess) lsu.commit.commit(False);
+        if (instr.isSystem) system.deq(False);
         if (instr.isMemAccess) useMem = True;
+        if (instr.isSystem) useSys = True;
         alu[i].commit.commit(False);
         consumed[i] = True;
       end
@@ -330,11 +357,19 @@ module mkCPU(CpuIfc);
     scoreboard[1] <= score;
   endrule
 
+  Reg#(Bit#(32)) forwardProgess <- mkReg(0);
+
+  rule dead_lock if (forwardProgess >= 1000000);
+    $display("dead lock at %h", commitPc);
+    $finish();
+  endrule
+
   rule commit
     if (outBuffer.mask != replicate(False) && !redirectQ.canDeq && outBuffer.epoch == epoch[0]);
 
     Bool stop = False;
     Bool useMem = False;
+    Bool useSys = False;
     Bool trainHit = True;
     Bit#(32) currentPc = commitPc;
     Bit#(32) score = scoreboard[1];
@@ -349,13 +384,29 @@ module mkCPU(CpuIfc);
       dynamicAssert(pc == currentPc, "control flow error");
 
       let rdy = !(instr.isMemAccess && useMem);
+
       if (instr.isMemAccess && !lsu.commit.valid) rdy = False;
+      if (instr.isSystem && !system.canDeq) rdy = False;
+      if (instr.isSystem && !csrOut.canEnq) rdy = False;
+      if (instr.isSystem && useSys) rdy = False;
       if (!alu[i].commit.valid) rdy = False;
       if (!rdy) stop = True;
 
-      let exception = instr.isMemAccess ? lsu.commit.exception : alu[i].commit.exception;
-      let nextPc = instr.isMemAccess ? lsu.commit.nextPc : alu[i].commit.nextPc;
-      let cause = instr.isMemAccess ? lsu.commit.cause : alu[i].commit.cause;
+      let exception = alu[i].commit.exception;
+      let nextPc = alu[i].commit.nextPc;
+      let cause = alu[i].commit.cause;
+
+      if (instr.isMemAccess) begin
+        exception = lsu.commit.exception;
+        nextPc = lsu.commit.nextPc;
+        cause = lsu.commit.cause;
+      end
+
+      if (instr.isSystem) begin
+        exception = system.response.exception;
+        cause = system.response.cause;
+        nextPc = system.response.pc;
+      end
 
       if (outBuffer.exception[i]) begin
         cause = outBuffer.cause[i];
@@ -369,11 +420,17 @@ module mkCPU(CpuIfc);
 
         if (debug) $display(cycle, " commit 0x%h: ", pc, showRvInstr(instr));
 
-        if (outBuffer.exception[i]) $display("pc: %h cycle: %d instret: %d", pc, cycle, instret);
+        if (exception) $display("pc: %h cycle: %d instret: %d", pc, cycle, instret);
 
         if (instr.isMemAccess) begin
           lsu.commit.commit(!exception);
           useMem = True;
+        end
+
+        if (instr.isSystem) begin
+          system.deq(!exception);
+          csrOut.enq(tuple2(instr.rd, system.response.rd));
+          useSys = True;
         end
 
         currentPc = nextPc;
@@ -381,7 +438,7 @@ module mkCPU(CpuIfc);
         if (exception) score[instr.rd] = 0;
 
         // Misprediction: redirect pipeline
-        if (nextPc != outBuffer.bprediction[i]) begin
+        if (exception || nextPc != outBuffer.bprediction[i]) begin
           if (debug) $display("          redirect from 0x%h to 0x%h", pc, nextPc);
 
           redirectQ.enq(tuple3(
@@ -410,6 +467,7 @@ module mkCPU(CpuIfc);
       });
     end
 
+    forwardProgess <= consumed == replicate(False) ? forwardProgess+1 : 0;
     outBuffer.consume(consumed);
     instret <= instrCounter;
     scoreboard[1] <= score;
@@ -419,6 +477,7 @@ module mkCPU(CpuIfc);
   rule dispatch if (inBuffer.mask != replicate(False));
     Bool stop = False;
     Bool useMem = False;
+    Bool useSys = False;
     Bit#(32) score = scoreboard[2];
     Super#(Bool) consumed = replicate(False);
 
@@ -461,8 +520,10 @@ module mkCPU(CpuIfc);
 
       if (!rdy1 || !rdy2) rdy = False;
 
+      if (!system.canEnter && instr.isSystem) rdy = False;
       if (!lsu.canEnter && instr.isMemAccess) rdy = False;
       if (useMem && instr.isMemAccess) rdy = False;
+      if (useSys && instr.isSystem) rdy = False;
       if (!alu[i].canEnter) rdy = False;
       if (!rdy) stop = True;
 
@@ -479,6 +540,11 @@ module mkCPU(CpuIfc);
         };
 
         alu[i].enter(aluReq, inBuffer.epoch);
+
+        if (instr.isSystem) begin
+          system.enter(aluReq, Machine);
+          useSys = True;
+        end
 
         if (instr.isMemAccess) begin
           lsu.enter(aluReq, inBuffer.epoch);

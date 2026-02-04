@@ -93,6 +93,7 @@ typedef struct {
   Bool isMemAccess;
   CsrId csr;
   Bool csrI;
+  Bool isSystem;
 } RvInstr deriving(Bits, FShow);
 
 function RvInstr decodeRvInstr(Bit#(32) data);
@@ -240,7 +241,8 @@ function RvInstr decodeRvInstr(Bit#(32) data);
     accessWidth: funct3[1:0],
     isUnsigned: funct3[2] == 1,
     immValid: utype || stype || itype || jtype || btype,
-    isMemAccess: operation == Load || operation == Store
+    isMemAccess: operation == Load || operation == Store,
+    isSystem: operation == Csrrc || operation == Csrrs || operation == Csrrw
   };
 endfunction
 

@@ -191,60 +191,63 @@ endfunction
 interface CsrIfc;
   (* always_ready *) method Bool flush;
   (* always_ready *) method CsrId csr;
-  (* always_ready *) method ActionValue#(Bit#(32)) read();
+  (* always_ready *) method Bit#(32) read();
   (* always_ready *) method Action write(Bit#(32) val);
 endinterface
 
 function CsrIfc readOnlyCsr(Bit#(32) r, CsrId i) = interface CsrIfc;
-  method read = actionvalue return r; endactionvalue;
   method Action write(Bit#(32) _) = noAction;
   method flush = False;
+  method read = r;
   method csr = i;
 endinterface;
 
 module mkRegCsr#(Reg#(Bit#(32)) r, CsrId i) (CsrIfc);
-  method read = actionvalue return r; endactionvalue;
   method write = r._write;
   method flush = False;
+  method read = r;
   method csr = i;
 endmodule
 
-//interface CsrUnit;
-//  (* always_ready *) method ActionValue#(Bit#(32)) read(CsrId id);
-//  (* always_ready *) method Action write(CsrId id, Bit#(32) val);
-//endinterface
-//
-//module mkCsrUnit#(List#(CsrIfc) csrs) (CsrUnit);
-//  method ActionValue#(Bit#(32)) read(CsrId id);
-//    Bit#(32) ret = ?;
-//
-//    for (Integer i=0; i < List::length(csrs); i = i + 1) if (id == csrs[i].csr) begin
-//      ret <- csrs[i].read();
-//    end
-//
-//    return ret;
-//  endmethod
-//
-//  method Action write(CsrId id, Bit#(32) val);
-//    for (Integer i=0; i < List::length(csrs); i = i + 1) if (id == csrs[i].csr) begin
-//      csrs[i].write(val);
-//    end
-//  endmethod
-//endmodule
-
-interface AluIfc;
+interface CsrUnitIfc;
   (* always_ready *) method Bool canEnter;
   method Action enter(AluRequest req, Priv p);
 
   (* always_ready *) method Bool canDeq;
-  method ActionValue#(AluResponse) deq(Bool commit);
+  (* always_ready *) method AluResponse response;
+  method Action deq(Bool commit);
 endinterface
 
-module mkCsrUnit#(List#(CsrIfc) csrs) (AluIfc);
+module mkCsrUnit#(List#(CsrIfc) csrs) (CsrUnitIfc);
   Reg#(Bool) valid[2] <- mkCReg(2, False);
   Reg#(AluRequest) request <- mkRegU;
   Reg#(Priv) priv <- mkRegU;
 
+  RvInstr instr = request.instr;
+  Operation opcode = instr.opcode;
+  CsrId csr = instr.csr;
+
+  let doRead = opcode == Csrrw ? instr.rd == 0 : True;
+  let doWrite = opcode == Csrrc || opcode == Csrrs ? instr.rs1 == 0 : True;
+  let readOnly = isReadOnlyCsr(csr);
+
+  let legal = !(readOnly && doWrite) && priv >= minPrivCsr(csr);
+  doWrite = doWrite && legal;
+  doRead = doRead && legal;
+
+  Bit#(32) value = ?;
+  for (Integer i=0; i < List::length(csrs); i = i + 1) if (doRead && csrs[i].csr == csr) begin
+    value = csrs[i].read();
+  end
+
+  Bit#(32) operand = instr.csrI ? zeroExtend(instr.rs1) : request.rs1;
+
+  Bit#(32) val = case (opcode) matches
+    Csrrc : value & ~operand;
+    Csrrs : value | operand;
+    Csrrw : operand;
+    default: ?;
+  endcase;
 
   method canEnter = !valid[1];
   method Action enter(AluRequest req, Priv p) if (!valid[1]);
@@ -255,36 +258,7 @@ module mkCsrUnit#(List#(CsrIfc) csrs) (AluIfc);
 
   method canDeq = valid[0];
 
-  method ActionValue#(AluResponse) deq(Bool commit);
-    RvInstr instr = request.instr;
-    Operation opcode = instr.opcode;
-    CsrId csr = instr.csr;
-
-    let doRead = opcode == Csrrw ? instr.rd == 0 : True;
-    let doWrite = opcode == Csrrc || opcode == Csrrs ? instr.rs1 == 0 : True;
-    let readOnly = isReadOnlyCsr(csr);
-
-    let legal = !(readOnly && doWrite) && priv > minPrivCsr(csr);
-    doWrite = doWrite && legal;
-
-    Bit#(32) value = ?;
-    for (Integer i=0; i < List::length(csrs); i = i + 1) if (doRead && csrs[i].csr == csr) begin
-      value <- csrs[i].read();
-    end
-
-    Bit#(32) operand = instr.csrI ? zeroExtend(instr.rs1) : request.rs1;
-
-    Bit#(32) val = case (opcode) matches
-      Csrrc : value & ~operand;
-      Csrrs : value | operand;
-      Csrrw : operand;
-      default: ?;
-    endcase;
-
-    for (Integer i=0; i < List::length(csrs); i = i + 1) if (doWrite && csrs[i].csr == csr) begin
-      csrs[i].write(val);
-    end
-
+  method AluResponse response;
     return AluResponse{
       cause: IllegalInstruction,
       pc: request.pc + 4,
@@ -292,6 +266,14 @@ module mkCsrUnit#(List#(CsrIfc) csrs) (AluIfc);
       tval: instr.raw,
       rd: value
     };
+  endmethod
+
+  method Action deq(Bool commit) if (valid[0]);
+    for (Integer i=0; i < List::length(csrs); i = i + 1) if (doWrite && csrs[i].csr == csr) begin
+      csrs[i].write(val);
+    end
+
+    valid[0] <= False;
   endmethod
 endmodule
 

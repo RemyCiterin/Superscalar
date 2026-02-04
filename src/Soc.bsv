@@ -5,7 +5,7 @@ import RvAlu::*;
 import UART::*;
 
 import RvCore :: *;
-import RvCSR::*;
+import RvSystem::*;
 
 interface MainIfc;
   (* always_ready, always_enabled *)
