@@ -140,15 +140,12 @@ pub export fn kernel_main() align(16) callconv(.C) void {
     matmul(n, &Ctx.A, &Ctx.B, &Ctx.C);
     asm volatile ("fence" ::: "memory");
 
-    NBody.init();
+    ReduceAll.init();
     asm volatile ("fence" ::: "memory");
-    NBody.init_frame();
+    ReduceAll.compute();
     asm volatile ("fence" ::: "memory");
-    NBody.compute_acc();
-    asm volatile ("fence" ::: "memory");
-    NBody.apply_acc();
 
-    asm volatile ("fence" ::: "memory");
+    UART.writer.print("{}\n", .{ReduceAll.acc}) catch unreachable;
 
     for (0..n) |i| {
         for (0..n) |j| {
@@ -167,6 +164,61 @@ pub export fn kernel_main() align(16) callconv(.C) void {
     @panic("unreachable");
 }
 
+// Memory intensive benchmark: I use it to measure the impact of a cache mis
+pub const ReduceAll = struct {
+    const N = 1024;
+
+    // Represent one cache line
+    pub const line_t = packed struct(u512) {
+        value: i32,
+        _padding: u480,
+    };
+
+    var lhs: [N]line_t = undefined;
+    var rhs: [N]line_t = undefined;
+    var acc: i32 = undefined;
+
+    var rng = @import("random.zig").init(42);
+
+    pub fn init() void {
+        const rand = rng.random();
+        for (0..N) |i| {
+            lhs[i].value = @as(i32, @intCast(rand.int(u8))) - 128;
+            rhs[i].value = @as(i32, @intCast(rand.int(u8))) - 128;
+        }
+
+        acc = 0;
+    }
+
+    pub fn compute() void {
+        for (0..N) |i| {
+            compute_partial(i, 0, N);
+        }
+    }
+
+    pub fn compute_tiled(tsize: usize) void {
+        const tiles = (N + tsize - 1) / tsize;
+
+        for (0..tiles) |I| {
+            for (0..tiles) |J| {
+                const maxi = @min(N, (I + 1) * tsize);
+                const maxj = @min(N, (J + 1) * tsize);
+
+                for (I * tsize..maxi) |i| {
+                    compute_partial(i, J * tsize, maxj);
+                }
+            }
+        }
+    }
+
+    pub fn compute_partial(i: usize, start: usize, stop: usize) void {
+        for (start..stop) |j| {
+            acc += lhs[i].value * rhs[j].value;
+        }
+    }
+};
+
+// Floating points benchmark
 pub const NBody = struct {
     const N = 30;
 
@@ -188,10 +240,14 @@ pub const NBody = struct {
 
     var dt: f32 = 1;
 
-    pub fn init() void {
-        var rng = @import("random.zig").init(42);
-        const rand = rng.random();
+    var rng = @import("random.zig").init(42);
 
+    pub fn rand() f32 {
+        const gen = rng.random();
+        return @as(f32, @floatFromInt(gen.int(u8))) / 256.0;
+    }
+
+    pub fn init() void {
         for (0..N) |i| {
             if (i == 0) {
                 mass[i] = 2e24;
@@ -204,12 +260,11 @@ pub const NBody = struct {
                 continue;
             }
 
-            mass[i] = rand.float(f32) * 5e20;
-            UART.writer.print("{}\n", .{mass[i]}) catch unreachable;
+            mass[i] = rand() * 5e20;
 
-            const phi = rand.float(f32) * 2 * 3.14159;
-            const theta = rand.float(f32) * 2 * 3.14159;
-            const dist = rand.float(f32) * 1e8 + 1e8;
+            const phi = rand() * 2 * 3.14159;
+            const theta = rand() * 2 * 3.14159;
+            const dist = rand() * 1e8 + 1e8;
 
             pos_x[i] = std.math.cos(phi) * std.math.sin(theta) * dist;
             pos_y[i] = std.math.sin(phi) * dist;
@@ -242,28 +297,47 @@ pub const NBody = struct {
 
     pub fn compute_acc() void {
         for (0..N) |i| {
-            var ax = acc_x[i];
-            var ay = acc_y[i];
-            var az = acc_z[i];
-
-            for (0..N) |j| {
-                const rijx = pos_x[i] - pos_x[j];
-                const rijy = pos_y[i] - pos_y[j];
-                const rijz = pos_z[i] - pos_z[j];
-
-                const rij_squared = rijx * rijx + rijy * rijy + rijz * rijz + 1e-3;
-
-                const a = G * mass[j] / (rij_squared * std.math.sqrt(rij_squared));
-
-                ax += a * rijx;
-                ay += a * rijy;
-                az += a * rijz;
-            }
-
-            acc_x[i] += ax;
-            acc_y[i] += ay;
-            acc_z[i] += az;
+            compute_acc_partial(i, 0, N);
         }
+    }
+
+    pub fn compute_acc_tiled(tsize: usize) void {
+        const tiles = (N + tsize - 1) / tsize;
+
+        for (0..tiles) |I| {
+            for (0..tiles) |J| {
+                const maxi = @min(N, (I + 1) * tsize);
+                const maxj = @min(N, (J + 1) * tsize);
+
+                for (I * tsize..maxi) |i| {
+                    compute_acc_partial(i, J * tsize, maxj);
+                }
+            }
+        }
+    }
+
+    pub fn compute_acc_partial(i: usize, start: usize, stop: usize) void {
+        var ax = acc_x[i];
+        var ay = acc_y[i];
+        var az = acc_z[i];
+
+        for (start..stop) |j| {
+            const rijx = pos_x[i] - pos_x[j];
+            const rijy = pos_y[i] - pos_y[j];
+            const rijz = pos_z[i] - pos_z[j];
+
+            const rij_squared = rijx * rijx + rijy * rijy + rijz * rijz + 1e-3;
+
+            const a = G * mass[j] / (rij_squared * std.math.sqrt(rij_squared));
+
+            ax += a * rijx;
+            ay += a * rijy;
+            az += a * rijz;
+        }
+
+        acc_x[i] += ax;
+        acc_y[i] += ay;
+        acc_z[i] += az;
     }
 };
 
