@@ -167,11 +167,11 @@ endfunction
 
 function Bit#(n) countLeadingZeros(Bit#(n) x);
   Bool found = False;
-  Bit#(n) ret = 0;
+  Bit#(n) ret = 32;
 
-  for (Integer i=0; i < valueof(n); i = i + 1) begin
-    found = found || x[valueof(n)-1-i] == 1;
-    ret = ret + 1;
+  for (Integer i=0; i < valueof(n); i = i + 1) if (!found && x[valueof(n)-1-i] == 1) begin
+    ret = fromInteger(i);
+    found = True;
   end
 
   return ret;
@@ -179,11 +179,11 @@ endfunction
 
 function Bit#(n) countTrailingZeros(Bit#(n) x);
   Bool found = False;
-  Bit#(n) ret = 0;
+  Bit#(n) ret = 32;
 
-  for (Integer i=0; i < valueof(n); i = i + 1) begin
-    found = found || x[i] == 1;
-    ret = ret + 1;
+  for (Integer i=0; i < valueof(n); i = i + 1) if (!found && x[i] == 1) begin
+    ret = fromInteger(i);
+    found = True;
   end
 
   return ret;

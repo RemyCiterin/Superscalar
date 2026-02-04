@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) !void {
         .cpu_features_add = Target.riscv.featureSet(&[_]Feature{
             .m,
             .zba,
-            .zbb,
+            //.zbb,
             .zicbom,
         }),
         .os_tag = .freestanding,

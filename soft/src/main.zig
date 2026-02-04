@@ -140,6 +140,16 @@ pub export fn kernel_main() align(16) callconv(.C) void {
     matmul(n, &Ctx.A, &Ctx.B, &Ctx.C);
     asm volatile ("fence" ::: "memory");
 
+    NBody.init();
+    asm volatile ("fence" ::: "memory");
+    NBody.init_frame();
+    asm volatile ("fence" ::: "memory");
+    NBody.compute_acc();
+    asm volatile ("fence" ::: "memory");
+    NBody.apply_acc();
+
+    asm volatile ("fence" ::: "memory");
+
     for (0..n) |i| {
         for (0..n) |j| {
             UART.writer.print("{}\t", .{Ctx.C[i * n + j]}) catch unreachable;
@@ -156,6 +166,106 @@ pub export fn kernel_main() align(16) callconv(.C) void {
 
     @panic("unreachable");
 }
+
+pub const NBody = struct {
+    const N = 30;
+
+    var pos_x: [N]f32 = undefined;
+    var pos_y: [N]f32 = undefined;
+    var pos_z: [N]f32 = undefined;
+
+    var vel_x: [N]f32 = undefined;
+    var vel_y: [N]f32 = undefined;
+    var vel_z: [N]f32 = undefined;
+
+    var acc_x: [N]f32 = undefined;
+    var acc_y: [N]f32 = undefined;
+    var acc_z: [N]f32 = undefined;
+
+    var mass: [N]f32 = undefined;
+
+    var G: f32 = 6.67384e-11;
+
+    var dt: f32 = 1;
+
+    pub fn init() void {
+        var rng = @import("random.zig").init(42);
+        const rand = rng.random();
+
+        for (0..N) |i| {
+            if (i == 0) {
+                mass[i] = 2e24;
+                pos_x[i] = 0.0;
+                pos_y[i] = 0.0;
+                pos_z[i] = 0.0;
+                vel_x[i] = 0.0;
+                vel_y[i] = 0.0;
+                vel_z[i] = 0.0;
+                continue;
+            }
+
+            mass[i] = rand.float(f32) * 5e20;
+            UART.writer.print("{}\n", .{mass[i]}) catch unreachable;
+
+            const phi = rand.float(f32) * 2 * 3.14159;
+            const theta = rand.float(f32) * 2 * 3.14159;
+            const dist = rand.float(f32) * 1e8 + 1e8;
+
+            pos_x[i] = std.math.cos(phi) * std.math.sin(theta) * dist;
+            pos_y[i] = std.math.sin(phi) * dist;
+            pos_z[i] = std.math.cos(phi) * std.math.cos(theta) * dist;
+
+            vel_x[i] = pos_y[i] * 4e-6;
+            vel_y[i] = -pos_x[i] * 4e-6;
+            vel_z[i] = 0.0;
+        }
+    }
+
+    pub fn init_frame() void {
+        for (0..N) |i| {
+            acc_x[i] = 0;
+            acc_y[i] = 0;
+            acc_z[i] = 0;
+        }
+    }
+
+    pub fn apply_acc() void {
+        for (0..N) |i| {
+            pos_x[i] += dt * (vel_x[i] + dt * 0.5 * acc_x[i]);
+            pos_y[i] += dt * (vel_y[i] + dt * 0.5 * acc_y[i]);
+            pos_z[i] += dt * (vel_z[i] + dt * 0.5 * acc_z[i]);
+            vel_x[i] += dt * acc_x[i];
+            vel_y[i] += dt * acc_y[i];
+            vel_z[i] += dt * acc_z[i];
+        }
+    }
+
+    pub fn compute_acc() void {
+        for (0..N) |i| {
+            var ax = acc_x[i];
+            var ay = acc_y[i];
+            var az = acc_z[i];
+
+            for (0..N) |j| {
+                const rijx = pos_x[i] - pos_x[j];
+                const rijy = pos_y[i] - pos_y[j];
+                const rijz = pos_z[i] - pos_z[j];
+
+                const rij_squared = rijx * rijx + rijy * rijy + rijz * rijz + 1e-3;
+
+                const a = G * mass[j] / (rij_squared * std.math.sqrt(rij_squared));
+
+                ax += a * rijx;
+                ay += a * rijy;
+                az += a * rijz;
+            }
+
+            acc_x[i] += ax;
+            acc_y[i] += ay;
+            acc_z[i] += az;
+        }
+    }
+};
 
 pub fn matmul(
     n: usize,
