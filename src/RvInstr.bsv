@@ -71,8 +71,14 @@ typedef enum {
   Rol,
   Ror,
   Orcb,
-  Rev8
+  Rev8,
+
+  Csrrw,
+  Csrrc,
+  Csrrs
 } Operation deriving(Bits, FShow, Eq);
+
+typedef Bit#(12) CsrId;
 
 typedef struct {
   Bit#(32) raw;
@@ -85,6 +91,8 @@ typedef struct {
   AccessWidth accessWidth;
   Bool isUnsigned;
   Bool isMemAccess;
+  CsrId csr;
+  Bool csrI;
 } RvInstr deriving(Bits, FShow);
 
 function RvInstr decodeRvInstr(Bit#(32) data);
@@ -123,6 +131,12 @@ function RvInstr decodeRvInstr(Bit#(32) data);
     imm = signExtend(data[31:20]);
 
     operation = case (tuple4(opcode, funct7, funct3, rs2)) matches
+      {7'b1110011, .*, 3'b101, .*} : Csrrw;
+      {7'b1110011, .*, 3'b001, .*} : Csrrw;
+      {7'b1110011, .*, 3'b110, .*} : Csrrs;
+      {7'b1110011, .*, 3'b010, .*} : Csrrs;
+      {7'b1110011, .*, 3'b111, .*} : Csrrc;
+      {7'b1110011, .*, 3'b011, .*} : Csrrc;
       {7'b0010011, .*, 3'b000, .*} : Add;
       {7'b0010011, .*, 3'b010, .*} : Slt;
       {7'b0010011, .*, 3'b011, .*} : Sltu;
@@ -220,7 +234,9 @@ function RvInstr decodeRvInstr(Bit#(32) data);
     rs2: rs2,
     imm: imm,
     raw: data,
+    csr: imm[11:0],
     opcode: operation,
+    csrI: funct3[2] == 1,
     accessWidth: funct3[1:0],
     isUnsigned: funct3[2] == 1,
     immValid: utype || stype || itype || jtype || btype,
@@ -354,29 +370,21 @@ function Bool supportLateIssue(Operation opcode);
     Sh1add: True;
     Sh2add: True;
     Sh3add: True;
-    Min   : True;
-    Max   : True;
-    Minu  : True;
-    Maxu  : True;
-    Xnor  : True;
-    Orn   : True;
-    Andn  : True;
-    Clz   : True;
-    Ctz   : True;
-    Cpop  : True;
-    Sexth : True;
-    Sextb : True;
-    Zexth : True;
-    Orcb  : True;
-    Rev8  : True;
-    //Div:    True;
-    //Divu:   True;
-    //Rem:    True;
-    //Remu:   True;
-    //Mul:    True;
-    //Mulh:   True;
-    //Mulhu:  True;
-    //Mulhsu: True;
+    Min:    True;
+    Max:    True;
+    Minu:   True;
+    Maxu:   True;
+    Xnor:   True;
+    Orn:    True;
+    Andn:   True;
+    Clz:    True;
+    Ctz:    True;
+    Cpop:   True;
+    Sexth:  True;
+    Sextb:  True;
+    Zexth:  True;
+    Orcb:   True;
+    Rev8:   True;
     default: False;
   endcase;
 endfunction

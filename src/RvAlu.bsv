@@ -67,14 +67,16 @@ module mkAlu#(Bool multiplication, Bool division, Bool branch) (AluIfc);
         rd: divider.response,
         pc: request.pc+4,
         exception: False,
-        cause: ?
+        cause: ?,
+        tval: ?
       };
     end else if (isMul && multiplication) begin
       return AluResponse{
         rd: multiplier.response,
         pc: request.pc+4,
         exception: False,
-        cause: ?
+        cause: ?,
+        tval: ?
       };
     end else return execAlu(request, branch);
   endmethod
@@ -85,6 +87,7 @@ typedef struct {
   Bit#(32) rd;
   Bool exception;
   CauseException cause;
+  Bit#(32) tval;
 } AluResponse deriving(Bits);
 
 typedef struct {
@@ -160,6 +163,7 @@ function AluResponse execAlu(AluRequest req, Bool branch);
   return AluResponse{
     cause: InstructionAddressMisaligned,
     exception: nextPc[1:0] != 0,
+    tval: nextPc,
     pc: nextPc,
     rd: rd
   };
