@@ -12,16 +12,16 @@ A superscalar RISC-V CPU implementing rv32-im supporting Tiny Coupled memories.
     area/loss of frequency. It use a xor-based multi-ported register file.
 - Forwarding from the ALUs/LSU to the register read stage
 - Multiplication/Division (M extension)
+- Division and `clz`, `cpop`, `ctz` operations are off-pipeline, because otherwise they are in the
+    critical path, and are not frequent enough to be very interesting to pipeline on the benchmarks
+    I use
 - Data cache (up to one instruction per cycle)
 - Bitmap extension (`Zba` and `Zbb`)
 - System registers (CSRs)
 
 ## TODO
 
-- Remove some Zbb instruction from the bypassing circuit (like `clz`, `cpop`...) because the are in
-    the critical path, maybe also some shift/rotate instructions. Or implement them in a
-    pipelined manner
-- Implement pipelined mul/div, currently multiplication is either implemented using a
+- Implement pipelined mul/div/clz/ctz/cpop, currently multiplication is either implemented using a
     finite-state-machine, either using the DSP of the fpga.
 - Exceptions and interrupts
 - add an instruction cache

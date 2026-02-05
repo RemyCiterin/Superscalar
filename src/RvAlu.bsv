@@ -2,8 +2,6 @@ import RvInstr::*;
 import MulDiv::*;
 
 import BuildList::*;
-//import BitUtils::*;
-//import BUtils::*;
 
 interface AluIfc;
   (* always_ready *) method Bool canEnter;
@@ -23,12 +21,16 @@ module mkAlu#(Bool multiplication, Bool division, Bool branch) (AluIfc);
 
   let isMul = List::elem(request.instr.opcode, lst(Mul, Mulh, Mulhu, Mulhsu));
 
+  let isCount = List::elem(request.instr.opcode, lst(Clz, Cpop, Ctz));
+
+  BitCounterIfc counter <- mkBitCounter;
   MulServer multiplier <- mkMulServer;
   DivServer divider <- mkDivServer;
 
   Bool deqReady = valid[0] &&
     (!division || !isDivRem || divider.valid) &&
-    (!multiplication || !isMul || multiplier.valid);
+    (!multiplication || !isMul || multiplier.valid) &&
+    (!isCount || counter.valid);
 
   method Bool canEnter = !valid[1];
   method Action enter(AluRequest req) if (!valid[1]);
@@ -52,6 +54,7 @@ module mkAlu#(Bool multiplication, Bool division, Bool branch) (AluIfc);
     end
 
     valid[1] <= True;
+    counter.enter(req);
     request <= req;
   endmethod
 
@@ -65,6 +68,7 @@ module mkAlu#(Bool multiplication, Bool division, Bool branch) (AluIfc);
     if (isDivRem && division) begin
       return AluResponse{
         rd: divider.response,
+        forward: Invalid,
         pc: request.pc+4,
         exception: False,
         cause: ?,
@@ -73,6 +77,16 @@ module mkAlu#(Bool multiplication, Bool division, Bool branch) (AluIfc);
     end else if (isMul && multiplication) begin
       return AluResponse{
         rd: multiplier.response,
+        forward: Invalid,
+        pc: request.pc+4,
+        exception: False,
+        cause: ?,
+        tval: ?
+      };
+    end else if (isCount) begin
+      return AluResponse{
+        rd: counter.response,
+        forward: Invalid,
         pc: request.pc+4,
         exception: False,
         cause: ?,
@@ -88,6 +102,7 @@ typedef struct {
   Bool exception;
   CauseException cause;
   Bit#(32) tval;
+  Maybe#(Bit#(32)) forward;
 } AluResponse deriving(Bits);
 
 typedef struct {
@@ -109,43 +124,47 @@ function AluResponse execAlu(AluRequest req, Bool branch);
   Int#(32) srs2orImm = unpack(rs2orImm);
   let pc = req.pc;
 
+  let rd_fwd = case (req.instr.opcode) matches
+    Lui    : Valid(imm);
+    Move   : Valid(rs1);
+    Auipc  : Valid(pc + imm);
+    Jalr   : Valid(req.pc + 4);
+    Jal    : Valid(req.pc + 4);
+    Add    : Valid(rs1 + rs2orImm);
+    Sub    : Valid(rs1 - rs2orImm);
+    And    : Valid(rs1 & rs2orImm);
+    Or     : Valid(rs1 | rs2orImm);
+    Xor    : Valid(rs1 ^ rs2orImm);
+    Sltu   : Valid(rs1 < rs2orImm ? 1 : 0);
+    Slt    : Valid(srs1 < srs2orImm ? 1 : 0);
+    Sll    : Valid(rs1 << rs2orImm[4:0]);
+    Srl    : Valid(rs1 >> rs2orImm[4:0]);
+    Sra    : Valid(signedShiftRight(rs1, rs2orImm[4:0]));
+    Sh1add : Valid(((rs1 << 1) + rs2orImm));
+    Sh2add : Valid(((rs1 << 2) + rs2orImm));
+    Sh3add : Valid(((rs1 << 3) + rs2orImm));
+    Andn   : Valid(rs1 & ~rs2);
+    Orn    : Valid(rs1 | ~rs2);
+    Xnor   : Valid(~(rs1 ^ rs2));
+    Max    : Valid(srs1 < srs2 ? rs2 : rs1);
+    Maxu   : Valid(rs1 < rs2 ? rs2 : rs1);
+    Min    : Valid(srs1 > srs2 ? rs2 : rs1);
+    Minu   : Valid(rs1 > rs2 ? rs2 : rs1);
+    Sextb  : Valid(signExtend(rs1[7:0]));
+    Sexth  : Valid(signExtend(rs1[15:0]));
+    Zexth  : Valid(zeroExtend(rs1[15:0]));
+    Rol    : Valid(((rs1 << rs2[4:0]) | (rs1 >> (-rs2[4:0]))));
+    Ror    : Valid(((rs1 >> rs2orImm[4:0]) | (rs1 << (-rs2orImm[4:0]))));
+    Orcb   : Valid(orCombine(rs1));
+    Rev8   : Valid(revBytes(rs1));
+    default: Invalid;
+  endcase;
+
   let rd = case (req.instr.opcode) matches
-    Lui    : imm;
-    Move   : rs1;
-    Auipc  : pc + imm;
-    Jalr   : req.pc + 4;
-    Jal    : req.pc + 4;
-    Add    : rs1 + rs2orImm;
-    Sub    : rs1 - rs2orImm;
-    And    : rs1 & rs2orImm;
-    Or     : rs1 | rs2orImm;
-    Xor    : rs1 ^ rs2orImm;
-    Sltu   : rs1 < rs2orImm ? 1 : 0;
-    Slt    : srs1 < srs2orImm ? 1 : 0;
-    Sll    : rs1 << rs2orImm[4:0];
-    Srl    : rs1 >> rs2orImm[4:0];
-    Sra    : signedShiftRight(rs1, rs2orImm[4:0]);
-    Sh1add : ((rs1 << 1) + rs2orImm);
-    Sh2add : ((rs1 << 2) + rs2orImm);
-    Sh3add : ((rs1 << 3) + rs2orImm);
-    Andn   : rs1 & ~rs2;
-    Orn    : rs1 | ~rs2;
-    Xnor   : ~(rs1 ^ rs2);
-    Clz    : countLeadingZeros(rs1);
-    Ctz    : countTrailingZeros(rs1);
-    Cpop   : countSetBits(rs1);
-    Max    : srs1 < srs2 ? rs2 : rs1;
-    Maxu   : rs1 < rs2 ? rs2 : rs1;
-    Min    : srs1 > srs2 ? rs2 : rs1;
-    Minu   : rs1 > rs2 ? rs2 : rs1;
-    Sextb  : signExtend(rs1[7:0]);
-    Sexth  : signExtend(rs1[15:0]);
-    Zexth  : zeroExtend(rs1[15:0]);
-    Rol    : ((rs1 << rs2[4:0]) | (rs1 >> (-rs2[4:0])));
-    Ror    : ((rs1 >> rs2orImm[4:0]) | (rs1 << (-rs2orImm[4:0])));
-    Orcb   : orCombine(rs1);
-    Rev8   : revBytes(rs1);
-    .*     : 0;
+    //Clz    : countLeadingZeros(rs1);
+    //Ctz    : countTrailingZeros(rs1);
+    //Cpop   : countSetBits(rs1);
+    default: unJust(rd_fwd);
   endcase;
 
   let nextPc = case (req.instr.opcode) matches
@@ -164,11 +183,55 @@ function AluResponse execAlu(AluRequest req, Bool branch);
   return AluResponse{
     cause: InstructionAddressMisaligned,
     exception: nextPc[1:0] != 0,
+    forward: rd_fwd,
     tval: nextPc,
     pc: nextPc,
     rd: rd
   };
 endfunction
+
+interface BitCounterIfc;
+  (* always_ready *) method Action enter(AluRequest req);
+  (* always_ready *) method Bit#(32) response;
+  (* always_ready *) method Bool valid;
+endinterface
+
+(* synthesize *)
+module mkBitCounter(BitCounterIfc);
+  Reg#(Bit#(32)) operand <- mkRegU;
+  Reg#(Operation) opcode <- mkRegU;
+  Reg#(Bool) used <- mkReg(False);
+  Reg#(Bit#(32)) index <- mkRegU;
+  Reg#(Bit#(6)) acc <- mkRegU;
+  Reg#(Bool) found <- mkRegU;
+
+  rule step if (index != 0);
+    Bool one = (operand & index) != 0;
+
+    case (opcode) matches
+      Cpop : acc <= one ? acc+1 : acc;
+      Clz  : acc <= one ? 0 : acc + 1;
+      Ctz  : begin
+        if (!found && !one) acc <= acc + 1;
+        found <= found || one;
+      end
+    endcase
+
+    index <= index << 1;
+  endrule
+
+  method Action enter(AluRequest req);
+    opcode <= req.instr.opcode;
+    operand <= req.rs1;
+    found <= False;
+    used <= True;
+    index <= 1;
+    acc <= 0;
+  endmethod
+
+  method valid = used && index == 0;
+  method response = zeroExtend(acc);
+endmodule
 
 function Bit#(n) countLeadingZeros(Bit#(n) x);
   Bool found = False;

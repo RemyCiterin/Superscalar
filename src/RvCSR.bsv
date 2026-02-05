@@ -263,6 +263,7 @@ module mkCsrUnit#(List#(CsrIfc) csrs) (CsrUnitIfc);
       cause: IllegalInstruction,
       pc: request.pc + 4,
       exception: !legal,
+      forward: Invalid,
       tval: instr.raw,
       rd: value
     };

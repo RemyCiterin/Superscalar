@@ -142,8 +142,13 @@ pub export fn kernel_main() align(16) callconv(.C) void {
 
     ReduceAll.init();
     asm volatile ("fence" ::: "memory");
-    ReduceAll.compute();
+    ReduceAll.compute_tiled(64);
     asm volatile ("fence" ::: "memory");
+
+    //NBody.init();
+    //NBody.init_frame();
+    //NBody.compute_acc();
+    //NBody.apply_acc();
 
     UART.writer.print("{}\n", .{ReduceAll.acc}) catch unreachable;
 
@@ -261,6 +266,7 @@ pub const NBody = struct {
             }
 
             mass[i] = rand() * 5e20;
+            UART.writer.print("{}\n", .{mass[i]}) catch unreachable;
 
             const phi = rand() * 2 * 3.14159;
             const theta = rand() * 2 * 3.14159;

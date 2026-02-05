@@ -82,14 +82,15 @@ module mkExecAlu(ExecIfc#(1));
       value2 <= alu1.response.rd;
       request2 <= request1;
       alu1.deq;
-
     endmethod
   endinterface
 
   interface forward = vec(interface ForwardIfc;
-    method valid = alu1.canDeq && !request1.instr.isMemAccess && !request1.instr.isSystem;
+    method valid =
+      isJust(alu1.response.forward) && alu1.canDeq &&
+      !request1.instr.isMemAccess && !request1.instr.isSystem;
+    method result = unJust(alu1.response.forward);
     method destination = request1.instr.rd;
-    method result = alu1.response.rd;
     method epoch = epoch1;
   endinterface);
 
@@ -123,7 +124,7 @@ module mkLsu(LsuIfc);
   Bit#(32) maxDmemAddr = 'h80000000 + 'hFFFFF;
 
   BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
-    mkBRAMCore1BELoad('hFFFF, False, "Mem32.hex", False);
+    mkBRAMCore1BELoad('hFFFFF, False, "Mem32.hex", False);
 
   TLSlave#(32, 32, 8, 8, 0) slave <- mkTLBram('h80000000, 'hFFFFF, dmem);
 
