@@ -361,7 +361,7 @@ module mkCPU(CpuIfc);
 
   Reg#(Bit#(32)) forwardProgess <- mkReg(0);
 
-  rule dead_lock if (forwardProgess >= 1000000);
+  rule dead_lock if (forwardProgess >= 10000);
     $display("dead lock at %h", commitPc);
     $finish();
   endrule
@@ -553,6 +553,9 @@ module mkCPU(CpuIfc);
           rs2: op2,
           pc: pc
         };
+
+        //let resp = execAlu(aluReq, False);
+        //if (resp.forward matches tagged Valid .x &&& rd != 0) moves[i] = Valid(x);
 
         alu[i].enter(aluReq, inBuffer.epoch);
 

@@ -1,6 +1,9 @@
 import RvBranchPred :: *;
+import Connectable :: *;
 import BRAMCore :: *;
 import RvICache :: *;
+import TLTypes :: *;
+import TLBram :: *;
 import RvInstr :: *;
 import Vector :: *;
 import Assert :: *;
@@ -72,7 +75,16 @@ module mkFetch(FetchIfc);
     default : "";
   endcase;
 
-  let tcm <- mkInstructionMemoryTCM('h80000000, 'h80000000 + 'hFFFFF, fileName);
+  ICache#(8, 8) icache <- mkICache(0);
+
+  BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
+    mkBRAMCore1BELoad('hFFFFF, False, "Mem32.hex", False);
+
+  TLSlave#(32, 32, 8, 8, 0) slave <- mkTLBram('h80000000, 'hFFFFF, dmem);
+
+  mkConnection(icache.master, slave);
+
+  //let tcm <- mkInstructionMemoryTCM('h80000000, 'h80000000 + 'hFFFFF, fileName);
 
   Fifo#(1, Tuple2#(Bit#(32), Epoch)) queue <- mkPipelineFifo;
 
@@ -82,11 +94,12 @@ module mkFetch(FetchIfc);
 
   rule request;
     queue.enq(tuple2(nextPc[2], nextEpoch[2]));
-    tcm.request(nextPc[2] & ~pcMask);
+    //tcm.request(nextPc[2] & ~pcMask);
+    icache.lookup(nextPc[2] & ~pcMask);
     bpred.lookup(nextPc[2]);
   endrule
 
-  method ActionValue#(FetchOutput) get if (queue.canDeq && tcm.valid);
+  method ActionValue#(FetchOutput) get if (queue.canDeq && icache.valid);// && tcm.valid);
     match {.pc, .epoch} = queue.first;
     queue.deq;
 
@@ -98,7 +111,8 @@ module mkFetch(FetchIfc);
     Super#(Bit#(32)) pcVec = newVector;
     Super#(Bit#(32)) bprediction = newVector;
     for (Integer i=0; i < supSize; i = i + 1) begin
-      mask[i] = tcm.exception ? fromInteger(i) == laneBaseIndex : fromInteger(i) >= laneBaseIndex;
+      //mask[i] = tcm.exception ? fromInteger(i) == laneBaseIndex : fromInteger(i) >= laneBaseIndex;
+      mask[i] =  fromInteger(i) >= laneBaseIndex;
       pcVec[i] = basePc + 4 * fromInteger(i);
     end
 
@@ -117,12 +131,14 @@ module mkFetch(FetchIfc);
       end
     end
 
+    icache.deq;
+
     return FetchOutput {
-      exception: replicate(tcm.exception),
-      cause: replicate(tcm.cause),
+      exception: replicate(False),//replicate(tcm.exception),
+      cause: replicate(?),//replicate(tcm.cause),
       bprediction: bprediction,
       bstate: bstate,
-      data: tcm.data,
+      data: icache.response, // tcm.data,
       epoch: epoch,
       mask: mask,
       pc: pcVec

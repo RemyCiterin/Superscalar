@@ -22,6 +22,7 @@ typedef Bit#(2) AccessWidth;
 Bit#(32) nop = 32'h00000013;
 
 typedef enum {
+  // I
   Move,
   Err,
   Lui,
@@ -46,6 +47,8 @@ typedef enum {
   Bgeu,
   Load,
   Store,
+
+  // M
   Div,
   Divu,
   Rem,
@@ -54,9 +57,13 @@ typedef enum {
   Mulh,
   Mulhu,
   Mulhsu,
+
+  // Zba
   Sh1add,
   Sh2add,
   Sh3add,
+
+  // Zbb
   Andn,
   Orn,
   Xnor,
@@ -75,6 +82,7 @@ typedef enum {
   Orcb,
   Rev8,
 
+  // Zicsr
   Csrrw,
   Csrrc,
   Csrrs
@@ -366,6 +374,7 @@ typedef enum {
 function Bool supportLateIssue(Operation opcode);
   return case (opcode) matches
     Lui:    True;
+    Move:   True;
     Auipc:  True;
     Add:    True;
     Slt:    True;
@@ -387,9 +396,6 @@ function Bool supportLateIssue(Operation opcode);
     Xnor:   True;
     Orn:    True;
     Andn:   True;
-    Clz:    True;
-    Ctz:    True;
-    Cpop:   True;
     Sexth:  True;
     Sextb:  True;
     Zexth:  True;

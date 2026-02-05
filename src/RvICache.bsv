@@ -63,7 +63,7 @@ module mkICache#(Bit#(sourceW) source) (ICache#(sizeW, sourceW));
     replicateM(replicateM(mkForwardBRAMCoreBE((2 ** valueof(IndexW)) * (2 ** valueof(OffsetW)))));
 
   // A cache line is 2**5 = 32 bytes (= 256 bits)
-  Integer lineSize = valueof(OffsetW) + 2;
+  Integer lineSize = valueof(OffsetW) + supLogSize + 2;
   Integer ways = valueOf(NumWays);
 
   ////////////////////////////////////////////////////////////////////////////
