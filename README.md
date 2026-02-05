@@ -18,6 +18,9 @@ A superscalar RISC-V CPU implementing rv32-im supporting Tiny Coupled memories.
 
 ## TODO
 
+- Remove some Zbb instruction from the bypassing circuit (like `clz`, `cpop`...) because the are in
+    the critical path, maybe also some shift/rotate instructions. Or implement them in a
+    pipelined manner
 - Exceptions and interrupts
 - add an instruction cache
 - atomic memory operations, opens the door to parallelism

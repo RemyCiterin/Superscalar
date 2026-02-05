@@ -1,5 +1,6 @@
 import RvBranchPred :: *;
 import BRAMCore :: *;
+import RvICache :: *;
 import RvInstr :: *;
 import Vector :: *;
 import Assert :: *;
