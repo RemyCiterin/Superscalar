@@ -21,6 +21,7 @@ typedef Bit#(2) AccessWidth;
 Bit#(32) nop = 32'h00000013;
 
 typedef enum {
+  Move,
   Err,
   Lui,
   Auipc,
@@ -127,7 +128,6 @@ function RvInstr decodeRvInstr(Bit#(32) data);
   let jtype = opcode == 7'b1101111;
   let btype = opcode == 7'b1100011;
 
-
   if (itype) begin
     imm = signExtend(data[31:20]);
 
@@ -228,6 +228,13 @@ function RvInstr decodeRvInstr(Bit#(32) data);
       .* : Err;
     endcase;
   end
+
+  if (operation == And && rtype && rs2 == 0) operation = Move;
+  if (operation == Add && itype && imm == 0) operation = Move;
+  if (operation == Xor && rtype && rs2 == 0) operation = Move;
+  if (operation == Xor && itype && imm == 0) operation = Move;
+  if (operation == Or && rtype && rs2 == 0) operation = Move;
+  if (operation == Or && itype && imm == 0) operation = Move;
 
   return RvInstr{
     rd: rd,

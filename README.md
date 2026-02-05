@@ -18,9 +18,6 @@ A superscalar RISC-V CPU implementing rv32-im supporting Tiny Coupled memories.
 
 ## TODO
 
-- optimize register to register moves: replacing `x1` by `x2` after a `mv x1,x2` is possible, but
-    some other optimisations like replacing `x1` by `x0` after `xor x1,x2,x2` is not possible
-    because of weak memory ordering dependencies
 - Exceptions and interrupts
 - add an instruction cache
 - atomic memory operations, opens the door to parallelism
@@ -32,4 +29,16 @@ A superscalar RISC-V CPU implementing rv32-im supporting Tiny Coupled memories.
 
 ## Performances
 
-Current score is 4.15 CoreMark/MHz
+Current score is around 4.15 CoreMark/MHz with 2 issues per cycle.
+
+## Experiments
+
+### Move forwarding
+
+If a bundle (set of instructions fetched at the same cycle) of instructions is of the form
+`mv x1,x2; xor x3,x1,x8`, then the second instruction is not blocked because of the move, instead
+the value of the move is forwarded with 0 cycle of latency.
+Also it's not necessary to maintains a state and forward the moves between multiple bundles because
+the move latency is one cycle.
+But on CoreMark, the performance gain is VERY small (4.173 Coremark/MHz with forwarding and 4.166
+without).

@@ -212,6 +212,7 @@ endinterface
 module mkCPU(CpuIfc);
   Bool debug = False;
   Bool useForwarding = True;
+  Bool moveForwarding = False;
 
   Reg#(Bit#(32)) cycle <- mkReg(0);
 
@@ -480,6 +481,7 @@ module mkCPU(CpuIfc);
     Bool useSys = False;
     Bit#(32) score = scoreboard[2];
     Super#(Bool) consumed = replicate(False);
+    Super#(Maybe#(Bit#(32))) moves = replicate(Invalid);
 
     for (Integer i=0; i < supSize; i = i + 1) if (!stop && inBuffer.mask[i]) begin
       RvInstr instr = inBuffer.instr[i];
@@ -513,9 +515,19 @@ module mkCPU(CpuIfc);
       Bool rdy = scoreboard[2][rd] == 0;
 
       for (Integer j=0; j < i; j = j + 1) if (inBuffer.mask[j]) begin
-        if (rs1 != 0 && rs1 == inBuffer.instr[j].rd) rdy1 = False;
-        if (rs2 != 0 && rs2 == inBuffer.instr[j].rd) rdy2 = False;
+        if (rs1 != 0 && rs1 == inBuffer.instr[j].rd && moves[j] == Invalid) rdy1 = False;
+        if (rs2 != 0 && rs2 == inBuffer.instr[j].rd && moves[j] == Invalid) rdy2 = False;
         if (rd != 0 && rd == inBuffer.instr[j].rd) rdy = False;
+
+        if (rs1 != 0 && rs1 == inBuffer.instr[j].rd &&& moves[j] matches tagged Valid .d) begin
+          rdy1 = True;
+          op1 = d;
+        end
+
+        if (rs2 != 0 && rs2 == inBuffer.instr[j].rd &&& moves[j] matches tagged Valid .d) begin
+          rdy2 = True;
+          op2 = d;
+        end
       end
 
       if (!rdy1 || !rdy2) rdy = False;
@@ -530,6 +542,8 @@ module mkCPU(CpuIfc);
       if (rdy) begin
         consumed[i] = True;
         if (rd != 0) score[rd] = 1;
+
+        if (instr.opcode == Move && rd != 0 && moveForwarding) moves[i] = Valid(op1);
 
         //$display(cycle, " enter: ", showRvInstr(instr));
         let aluReq = AluRequest{

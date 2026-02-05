@@ -111,6 +111,7 @@ function AluResponse execAlu(AluRequest req, Bool branch);
 
   let rd = case (req.instr.opcode) matches
     Lui    : imm;
+    Move   : rs1;
     Auipc  : pc + imm;
     Jalr   : req.pc + 4;
     Jal    : req.pc + 4;
