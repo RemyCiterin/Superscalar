@@ -110,6 +110,8 @@ interface LsuIfc;
 
   (* always_ready, always_enabled *)
   method Bit#(1) transmit;
+
+  interface TLMaster#(32, 32, 8, 8, 0) master;
 endinterface
 
 (* synthesize *)
@@ -119,18 +121,11 @@ module mkLsu(LsuIfc);
   Reg#(Bit#(32)) pc1 <- mkRegU;
   Reg#(Epoch) epoch1 <- mkRegU;
 
-  TxUART txUart <- mkTxUART(25_000_000 / 115200);
+  TxUART txUart <- mkTxUART(1_000_000 / 115200);
   Bit#(32) minDmemAddr = 'h80000000;
   Bit#(32) maxDmemAddr = 'h80000000 + 'hFFFFF;
 
-  BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
-    mkBRAMCore1BELoad('hFFFFF, False, "Mem32.hex", False);
-
-  TLSlave#(32, 32, 8, 8, 0) slave <- mkTLBram('h80000000, 'hFFFFF, dmem);
-
   DCache#(8, 8) cache <- mkDCache(0);
-
-  mkConnection(cache.master, slave);
 
   Fifo#(1, Tuple2#(LsuRequest, RvInstr)) buffer <- mkBypassFifo;
   Reg#(LsuRequest) request2 <- mkRegU;
@@ -190,13 +185,15 @@ module mkLsu(LsuIfc);
 
         cache.deq(True);
         if (request2.store && request2.address == 'h10000000 && mask[0] == 1) begin
-          $write("%c", data[7:0]);
-          //txUart.put(data[7:0]);
+          //$write("%c", data[7:0]);
+          txUart.put(data[7:0]);
           $fflush(stdout);
         end
       endmethod
     endinterface
   endinterface
+
+  interface master = cache.master;
 
   method transmit = txUart.transmit;
 endmodule
@@ -207,13 +204,17 @@ interface CpuIfc;
 
   (* always_ready, always_enabled *)
   method Bit#(1) transmit;
+
+  interface TLMaster#(32, 32, 8, 8, 0) imaster;
+  interface TLMaster#(32, 32, 8, 8, 0) dmaster;
 endinterface
 
 (* synthesize *)
 module mkCPU(CpuIfc);
   Bool debug = False;
   Bool useForwarding = True;
-  Bool moveForwarding = False;
+  Bool zeroCycleAluForwarding = True;
+  Bool zeroCycleMoveForwarding = True;
 
   Reg#(Bit#(32)) cycle <- mkReg(0);
 
@@ -361,7 +362,7 @@ module mkCPU(CpuIfc);
 
   Reg#(Bit#(32)) forwardProgess <- mkReg(0);
 
-  rule dead_lock if (forwardProgess >= 10000);
+  rule dead_lock if (forwardProgess >= 100000);
     $display("dead lock at %h", commitPc);
     $finish();
   endrule
@@ -498,16 +499,25 @@ module mkCPU(CpuIfc);
       if (rs1 == 0) op1 = 0;
       if (rs2 == 0) op2 = 0;
 
+      if (
+        execAlu(AluRequest{instr: instr, rs1: op1, rs2: op2, pc: pc}, False).forward matches
+        tagged Valid .x &&& rd != 0 && zeroCycleAluForwarding
+      ) begin
+        moves[i] = Valid(x);
+      end
+
       Bool rdy1 = scoreboard[2][rs1] == 0;
       Bool rdy2 = scoreboard[2][rs2] == 0;
 
       for (Integer j=0; j < List::length(forwarding); j = j + 1) begin
         if (forwarding[j].wget matches tagged Valid {.r, .d} &&& r == rs1) begin
+          moves[i] = Invalid;
           rdy1 = True;
           op1 = d;
         end
 
         if (forwarding[j].wget matches tagged Valid {.r, .d} &&& r == rs2) begin
+          moves[i] = Invalid;
           rdy2 = True;
           op2 = d;
         end
@@ -544,7 +554,7 @@ module mkCPU(CpuIfc);
         consumed[i] = True;
         if (rd != 0) score[rd] = 1;
 
-        if (instr.opcode == Move && rd != 0 && moveForwarding) moves[i] = Valid(op1);
+        if (instr.opcode == Move && rd != 0 && zeroCycleMoveForwarding) moves[i] = Valid(op1);
 
         //$display(cycle, " enter: ", showRvInstr(instr));
         let aluReq = AluRequest{
@@ -553,9 +563,6 @@ module mkCPU(CpuIfc);
           rs2: op2,
           pc: pc
         };
-
-        //let resp = execAlu(aluReq, False);
-        //if (resp.forward matches tagged Valid .x &&& rd != 0) moves[i] = Valid(x);
 
         alu[i].enter(aluReq, inBuffer.epoch);
 
@@ -587,4 +594,7 @@ module mkCPU(CpuIfc);
 
   method transmit = uart;
   method led = 0;
+
+  interface imaster = fetch.master;
+  interface dmaster = lsu_ifc.master;
 endmodule

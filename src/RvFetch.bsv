@@ -58,6 +58,8 @@ interface FetchIfc;
 
   method Action trainMis(BranchPredTrain infos);
   method Action trainHit(BranchPredTrain infos);
+
+  interface TLMaster#(32, 32, 8, 8, 0) master;
 endinterface
 
 (* synthesize *)
@@ -77,15 +79,6 @@ module mkFetch(FetchIfc);
 
   ICache#(8, 8) icache <- mkICache(0);
 
-  BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
-    mkBRAMCore1BELoad('hFFFFF, False, "Mem32.hex", False);
-
-  TLSlave#(32, 32, 8, 8, 0) slave <- mkTLBram('h80000000, 'hFFFFF, dmem);
-
-  mkConnection(icache.master, slave);
-
-  //let tcm <- mkInstructionMemoryTCM('h80000000, 'h80000000 + 'hFFFFF, fileName);
-
   Fifo#(1, Tuple2#(Bit#(32), Epoch)) queue <- mkPipelineFifo;
 
   Bit#(32) pcMask = (1 << (supLogSize+2)) - 1;
@@ -94,12 +87,13 @@ module mkFetch(FetchIfc);
 
   rule request;
     queue.enq(tuple2(nextPc[2], nextEpoch[2]));
-    //tcm.request(nextPc[2] & ~pcMask);
     icache.lookup(nextPc[2] & ~pcMask);
     bpred.lookup(nextPc[2]);
   endrule
 
-  method ActionValue#(FetchOutput) get if (queue.canDeq && icache.valid);// && tcm.valid);
+  interface master = icache.master;
+
+  method ActionValue#(FetchOutput) get if (queue.canDeq && icache.valid);
     match {.pc, .epoch} = queue.first;
     queue.deq;
 
@@ -111,8 +105,8 @@ module mkFetch(FetchIfc);
     Super#(Bit#(32)) pcVec = newVector;
     Super#(Bit#(32)) bprediction = newVector;
     for (Integer i=0; i < supSize; i = i + 1) begin
-      //mask[i] = tcm.exception ? fromInteger(i) == laneBaseIndex : fromInteger(i) >= laneBaseIndex;
-      mask[i] =  fromInteger(i) >= laneBaseIndex;
+      Bool exception = False;
+      mask[i] = exception ? fromInteger(i) == laneBaseIndex : fromInteger(i) >= laneBaseIndex;
       pcVec[i] = basePc + 4 * fromInteger(i);
     end
 
@@ -134,11 +128,11 @@ module mkFetch(FetchIfc);
     icache.deq;
 
     return FetchOutput {
-      exception: replicate(False),//replicate(tcm.exception),
-      cause: replicate(?),//replicate(tcm.cause),
+      exception: replicate(False),
+      cause: replicate(?),
       bprediction: bprediction,
       bstate: bstate,
-      data: icache.response, // tcm.data,
+      data: icache.response,
       epoch: epoch,
       mask: mask,
       pc: pcVec
