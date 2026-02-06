@@ -59,6 +59,8 @@ module mkICache#(Bit#(sourceW) source) (ICache#(sizeW, sourceW));
   Vector#(NumWays, MultiRF#(1, 1, Index, Maybe#(Tag)))
     tagRams <- replicateM(mkForwardMultiRF(0, fromInteger(2 ** valueof(IndexW) - 1)));
 
+  Vector#(NumWays, Reg#(Maybe#(Tag))) tags <- replicateM(mkRegU);
+
   Vector#(NumWays, Super#(FORWARD_BRAM_BE#(Bit#(TAdd#(IndexW,OffsetW)), Bit#(32), 4))) dataRams <-
     replicateM(replicateM(mkForwardBRAMCoreBE((2 ** valueof(IndexW)) * (2 ** valueof(OffsetW)))));
 
@@ -90,9 +92,13 @@ module mkICache#(Bit#(sourceW) source) (ICache#(sizeW, sourceW));
     initIndex <= initIndex + 1;
   endrule
 
-  Reg#(Maybe#(Tag)) currentTag <- mkRegU;
-  Reg#(Bool) hit <- mkRegU;
-  Reg#(Way) way <- mkRegU;
+  Bool hit = False;
+  Way way = randomWay;
+
+  for (Integer i=0; i < valueof(NumWays); i = i + 1) if (tags[i] == Valid(physical.tag)) begin
+    way = fromInteger(i);
+    hit = True;
+  end
 
   ////////////////////////////////////////////////////////////////////////////
   // Cache line refill/evict sequence
@@ -124,8 +130,8 @@ module mkICache#(Bit#(sourceW) source) (ICache#(sizeW, sourceW));
 
     if (offset + 1 == 0) begin
       tagRams[way].writePorts[0].request(physical.index, Valid(physical.tag));
+      tags[way] <= Valid(physical.tag);
 
-      hit <= True;
       for (Integer i=0; i < ways; i = i + 1) begin
         for (Integer j=0; j < supSize; j = j + 1) begin
           dataRams[i][j].read({ physical.index, physical.offset });
@@ -163,27 +169,15 @@ module mkICache#(Bit#(sourceW) source) (ICache#(sizeW, sourceW));
     Physical phys = unpack(address);
     randomWay <= randomWay + 1;
 
-    Vector#(NumWays, Maybe#(Tag)) tags = newVector;
-    Bool found = False;
-    Way w = randomWay;
-
     for (Integer i=0; i < ways; i = i + 1) begin
       for (Integer j=0; j < supSize; j = j + 1) begin
         dataRams[i][j].read({ phys.index, phys.offset });
       end
 
       Maybe#(Tag) tag <- tagRams[i].readPorts[0].request(phys.index);
-      tags[i] = tag;
-
-      if (tag == Valid(phys.tag)) begin
-        w = fromInteger(i);
-        found = True;
-      end
+      tags[i] <= tag;
     end
 
-    way <= w;
-    hit <= found;
-    currentTag <= tags[w];
     state[1] <= Lookup;
     physical <= phys;
   endmethod
