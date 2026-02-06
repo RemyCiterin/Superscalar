@@ -118,6 +118,14 @@ const Ctx = struct {
     var C: [N * N]isize = undefined;
 };
 
+pub fn block_optim(x: usize) usize {
+    var y: usize = x;
+    asm volatile ("nop"
+        : [y] "+r" (y),
+    );
+    return y;
+}
+
 pub export fn kernel_main() align(16) callconv(.C) void {
     const logger = std.log.scoped(.kernel);
     logger.info("=== Start DOoOM ===", .{});
@@ -142,7 +150,8 @@ pub export fn kernel_main() align(16) callconv(.C) void {
 
     ReduceAll.init();
     asm volatile ("fence" ::: "memory");
-    ReduceAll.compute_tiled(64);
+    //ReduceAll.compute_tiled(block_optim(32));
+    ReduceAll.compute();
     asm volatile ("fence" ::: "memory");
 
     //NBody.init();
@@ -171,7 +180,7 @@ pub export fn kernel_main() align(16) callconv(.C) void {
 
 // Memory intensive benchmark: I use it to measure the impact of a cache mis
 pub const ReduceAll = struct {
-    const N = 1024;
+    const N = 128;
 
     // Represent one cache line
     pub const line_t = packed struct(u512) {
@@ -218,7 +227,7 @@ pub const ReduceAll = struct {
 
     pub fn compute_partial(i: usize, start: usize, stop: usize) void {
         for (start..stop) |j| {
-            acc += lhs[i].value * rhs[j].value;
+            acc += lhs[i].value + rhs[j].value;
         }
     }
 };

@@ -21,6 +21,8 @@ A superscalar RISC-V CPU implementing rv32-im supporting Tiny Coupled memories.
 
 ## TODO
 
+- Late ALU, similar to this [article](https://doi.org/10.1109/ICCD.2015.7357163), but I want to
+    restrict the branch resulutions to the early ALU, to keep the overall design of the commit stage
 - Implement pipelined mul/div/clz/ctz/cpop, currently multiplication is either implemented using a
     finite-state-machine, either using the DSP of the fpga.
 - Exceptions and interrupts
