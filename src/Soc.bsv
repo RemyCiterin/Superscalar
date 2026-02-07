@@ -22,7 +22,7 @@ endinterface
 module mkSoc(MainIfc);
   let cpu <- mkCPU();
 
-  Integer memSize = 'hFFFFF;
+  Integer memSize = 'hFF;
 
   BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
     mkBRAMCore1BELoad(memSize, False, "Mem32.hex", False);

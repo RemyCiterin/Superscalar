@@ -19,6 +19,7 @@ import TLTypes :: *;
 import TLBram :: *;
 
 interface CommitIfc;
+  (* always_ready *) method Maybe#(Bit#(32)) forward;
   (* always_ready *) method CauseException cause;
   (* always_ready *) method Bit#(32) nextPc;
   (* always_ready *) method Bool exception;
@@ -27,7 +28,6 @@ interface CommitIfc;
 endinterface
 
 interface WriteBackIfc;
-  (* always_ready *) method RvInstr instr;
   (* always_ready *) method Bit#(32) result;
   (* always_ready *) method Bool valid;
   method Action deq;
@@ -65,7 +65,6 @@ module mkExecAlu(ExecIfc#(1));
   Reg#(Epoch) epoch1 <- mkRegU;
 
   Reg#(Bool) valid2[2] <- mkCReg(2, False);
-  Reg#(AluRequest) request2 <- mkRegU;
   Reg#(Bit#(32)) value2 <- mkRegU;
 
   method canEnter = alu1.canEnter;
@@ -76,6 +75,7 @@ module mkExecAlu(ExecIfc#(1));
   endmethod
 
   interface CommitIfc commit;
+    method forward = alu1.response.forward;
     method valid = alu1.canDeq && !valid2[1];
     method exception = alu1.response.exception;
     method nextPc = alu1.response.pc;
@@ -84,22 +84,18 @@ module mkExecAlu(ExecIfc#(1));
     method Action commit(Bool keep) if (alu1.canDeq && !valid2[1]);
       if (keep) valid2[1] <= True;
       value2 <= alu1.response.rd;
-      request2 <= request1;
       alu1.deq;
     endmethod
   endinterface
 
   interface forward = vec(interface ForwardIfc;
-    method valid =
-      isJust(alu1.response.forward) && alu1.canDeq &&
-      !request1.instr.isMemAccess && !request1.instr.isSystem;
+    method valid = isJust(alu1.response.forward) && alu1.canDeq;
     method result = unJust(alu1.response.forward);
     method destination = request1.instr.rd;
     method epoch = epoch1;
   endinterface);
 
   interface WriteBackIfc writeBack;
-    method instr = request2.instr;
     method valid = valid2[0];
     method result = value2;
 
@@ -133,7 +129,6 @@ module mkLsu(LsuIfc);
 
   Fifo#(1, Tuple2#(LsuRequest, RvInstr)) buffer <- mkBypassFifo;
   Reg#(LsuRequest) request2 <- mkRegU;
-  Reg#(RvInstr) instr2 <- mkRegU;
 
   rule enq_stage2;
     match {.req, .instr} = buffer.first;
@@ -146,7 +141,6 @@ module mkLsu(LsuIfc);
       amo: ?
     });
 
-    instr2 <= instr;
     request2 <= req;
     buffer.deq;
   endrule
@@ -161,6 +155,7 @@ module mkLsu(LsuIfc);
     endmethod
 
     interface CommitIfc commit;
+      method forward = Invalid;
       method nextPc = pc1 + 4;
       method cause =
         request1.instr.opcode == Load ? LoadAddressMisaligned : StoreAmoAddressMisaligned;
@@ -180,7 +175,6 @@ module mkLsu(LsuIfc);
     interface WriteBackIfc writeBack;
       method result = lsuRequestRd(request2, cache.response);
       method valid = cache.valid;
-      method instr = instr2;
 
       method Action deq if (cache.valid);
         let address = (request2.address - 'h80000000) >> 2;
@@ -189,8 +183,8 @@ module mkLsu(LsuIfc);
 
         cache.deq(True);
         if (request2.store && request2.address == 'h10000000 && mask[0] == 1) begin
-          $write("%c", data[7:0]);
-          //txUart.put(data[7:0]);
+          //$write("%c", data[7:0]);
+          txUart.put(data[7:0]);
           $fflush(stdout);
         end
       endmethod

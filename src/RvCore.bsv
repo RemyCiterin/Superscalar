@@ -34,8 +34,8 @@ endinterface
 module mkCPU(CpuIfc);
   Bool debug = False;
   Bool useForwarding = True;
-  Bool zeroCycleAluForwarding = True;
-  Bool zeroCycleMoveForwarding = True;
+  Bool zeroCycleAluForwarding = False;
+  Bool zeroCycleMoveForwarding = False;
 
   Reg#(Bit#(32)) cycle <- mkReg(0);
 
@@ -44,7 +44,7 @@ module mkCPU(CpuIfc);
   let cycleCsr <- mkCycleCsr;
   let instrCsr <- mkInstructionCounterCsr;
   let system <- mkCsrUnit(List::append(cycleCsr, instrCsr.csrs));
-  Fifo#(1, Tuple2#(ArchReg, Bit#(32))) csrOut <- mkPipelineFifo;
+  Fifo#(1, Bit#(32)) csrOut <- mkPipelineFifo;
 
   rule incrCycle;
     cycle <= cycle + 1;
@@ -66,8 +66,9 @@ module mkCPU(CpuIfc);
 
   DecodeIfc decode <- mkDecode;
 
-  DispatchBuffer inBuffer <- mkDispatchBuffer;
-  DispatchBuffer outBuffer <- mkDispatchBuffer;
+  DispatchBuffer dispatchBuffer <- mkDispatchBuffer;
+  DispatchBuffer commitBuffer <- mkDispatchBuffer;
+  Buffer#(Super#(RvInstr)) wbBuffer <- mkBuffer;
 
   Vector#(SupSize, ExecIfc#(1)) alu <- replicateM(mkExecAlu);
 
@@ -89,7 +90,7 @@ module mkCPU(CpuIfc);
 
   rule decode2buffer;
     let data <- decode.get;
-    inBuffer.put(data);
+    dispatchBuffer.put(data);
   endrule
 
   if (useForwarding) rule forward;
@@ -102,82 +103,88 @@ module mkCPU(CpuIfc);
     end
   endrule
 
-  rule writeBackRl;
+  rule writeBackRl if (wbBuffer.mask != replicate(False));
+    Bool stop = False;
     Bool useMem = False;
     Bool useSys = False;
     Bit#(32) score = scoreboard[0];
+    Super#(Bool) consumed = replicate(False);
 
-    for (Integer i=0; i < supSize; i = i + 1) begin
-      WriteBackIfc wb = alu[i].writeBack;
+    for (Integer i=0; i < supSize; i = i + 1) if (!stop && wbBuffer.mask[i]) begin
+      RvInstr instr = wbBuffer[i];
+      ArchReg rd = instr.rd;
 
-      Bool rdy = wb.valid;
-      if (wb.instr.isSystem && useSys) rdy = False;
-      if (wb.instr.isMemAccess && useMem) rdy = False;
-      if (wb.instr.isSystem && !csrOut.canDeq) rdy = False;
-      if (wb.instr.isMemAccess && !lsu.writeBack.valid) rdy = False;
+      Bool rdy = True;
+      if (instr.isSystem && useSys) rdy = False;
+      if (instr.isMemAccess && useMem) rdy = False;
+      if (instr.isSystem && !csrOut.canDeq) rdy = False;
+      if (instr.isMemAccess && !lsu.writeBack.valid) rdy = False;
+      if (!instr.isMemAccess && !instr.isSystem && !alu[i].writeBack.valid) rdy = False;
+
+      if (!rdy) stop = True;
 
       if (rdy) begin
-        Bit#(32) result = wb.result;
-        ArchReg rd = wb.instr.rd;
+        Bit#(32) result = ?;
 
-        if (wb.instr.isMemAccess) begin
+        if (instr.isMemAccess) begin
           result = lsu.writeBack.result;
-          rd = lsu.writeBack.instr.rd;
           lsu.writeBack.deq;
           useMem = True;
-        end
-
-        if (wb.instr.isSystem) begin
-          result = csrOut.first.snd;
-          rd = csrOut.first.fst;
+        end else if (instr.isSystem) begin
+          result = csrOut.first;
           useSys = True;
           csrOut.deq;
+        end else begin
+          result = alu[i].writeBack.result;
+          alu[i].writeBack.deq;
         end
-
-        if (rd != 0) regFile.writePorts[i].request(rd, result);
-        score[rd] = 0;
-        wb.deq;
 
         if (debug && rd != 0) begin
           $display("        ", showReg(rd), " <= %h", result);
         end
+
+        if (rd != 0) regFile.writePorts[i].request(rd, result);
+        consumed[i] = True;
+        score[rd] = 0;
       end
     end
 
+    wbBuffer.consume(consumed);
     scoreboard[0] <= score;
   endrule
 
   Reg#(Bit#(32)) commitPc <- mkReg('h80000000);
 
-  rule flush if (outBuffer.mask != replicate(False) && outBuffer.epoch != epoch[0]);
+  rule flush if (commitBuffer.mask != replicate(False) && commitBuffer.epoch != epoch[0]);
     Bool stop = False;
     Bool useMem = False;
     Bool useSys = False;
     Bit#(32) score = scoreboard[1];
     Super#(Bool) consumed = replicate(False);
 
-    for (Integer i=0; i < supSize; i = i + 1) if (!stop && outBuffer.mask[i]) begin
-      RvInstr instr = outBuffer.instr[i];
+    for (Integer i=0; i < supSize; i = i + 1) if (!stop && commitBuffer.mask[i]) begin
+      RvInstr instr = commitBuffer.instr[i];
 
-      Bool rdy = alu[i].commit.valid;
+      Bool rdy = True;
       if (instr.isSystem && useSys) rdy = False;
       if (instr.isMemAccess && useMem) rdy = False;
       if (instr.isSystem && !system.canDeq) rdy = False;
       if (instr.isMemAccess && !lsu.commit.valid) rdy = False;
+      if (!instr.isMemAccess && !instr.isSystem && !alu[i].commit.valid) rdy = False;
       if (!rdy) stop = True;
 
       if (rdy) begin
         score[instr.rd] = 0;
+        if (!instr.isMemAccess && !instr.isSystem) alu[i].commit.commit(False);
         if (instr.isMemAccess) lsu.commit.commit(False);
         if (instr.isSystem) system.deq(False);
         if (instr.isMemAccess) useMem = True;
         if (instr.isSystem) useSys = True;
-        alu[i].commit.commit(False);
         consumed[i] = True;
       end
     end
 
-    outBuffer.consume(consumed);
+    commitBuffer.consume(consumed);
     scoreboard[1] <= score;
   endrule
 
@@ -188,8 +195,9 @@ module mkCPU(CpuIfc);
     $finish();
   endrule
 
-  rule commit
-    if (outBuffer.mask != replicate(False) && !redirectQ.canDeq && outBuffer.epoch == epoch[0]);
+  rule commit if (
+      commitBuffer.mask != replicate(False) && !redirectQ.canDeq && commitBuffer.epoch == epoch[0]
+    );
 
     Bool stop = False;
     Bool useMem = False;
@@ -199,21 +207,22 @@ module mkCPU(CpuIfc);
     Bit#(32) score = scoreboard[1];
     Bit#(32) instrCounter = instret;
     Super#(Bool) consumed = replicate(False);
+    Super#(Bool) commited = replicate(False);
 
-    for (Integer i=0; i < supSize; i = i + 1) if (!stop && outBuffer.mask[i]) begin
-      RvInstr instr = outBuffer.instr[i];
-      let pc = outBuffer.pc[i];
+    for (Integer i=0; i < supSize; i = i + 1) if (!stop && commitBuffer.mask[i]) begin
+      RvInstr instr = commitBuffer.instr[i];
+      let pc = commitBuffer.pc[i];
       ArchReg rd = instr.rd;
 
       dynamicAssert(pc == currentPc, "control flow error");
 
       let rdy = !(instr.isMemAccess && useMem);
 
+      if (!instr.isMemAccess && !instr.isSystem && !alu[i].commit.valid) rdy = False;
       if (instr.isMemAccess && !lsu.commit.valid) rdy = False;
       if (instr.isSystem && !system.canDeq) rdy = False;
       if (instr.isSystem && !csrOut.canEnq) rdy = False;
       if (instr.isSystem && useSys) rdy = False;
-      if (!alu[i].commit.valid) rdy = False;
       if (!rdy) stop = True;
 
       let exception = alu[i].commit.exception;
@@ -232,15 +241,15 @@ module mkCPU(CpuIfc);
         nextPc = system.response.pc;
       end
 
-      if (outBuffer.exception[i]) begin
-        cause = outBuffer.cause[i];
+      if (commitBuffer.exception[i]) begin
+        cause = commitBuffer.cause[i];
         exception = True;
       end
 
       if (rdy) begin
         consumed[i] = True;
+        commited[i] = !exception;
         instrCounter = instrCounter + 1;
-        alu[i].commit.commit(!exception);
 
         if (debug) $display(cycle, " commit 0x%h: ", pc, showRvInstr(instr));
 
@@ -249,12 +258,12 @@ module mkCPU(CpuIfc);
         if (instr.isMemAccess) begin
           lsu.commit.commit(!exception);
           useMem = True;
-        end
-
-        if (instr.isSystem) begin
+        end else if (instr.isSystem) begin
           system.deq(!exception);
-          csrOut.enq(tuple2(instr.rd, system.response.rd));
+          csrOut.enq(system.response.rd);
           useSys = True;
+        end else begin
+          alu[i].commit.commit(!exception);
         end
 
         currentPc = nextPc;
@@ -262,14 +271,14 @@ module mkCPU(CpuIfc);
         if (exception) score[instr.rd] = 0;
 
         // Misprediction: redirect pipeline
-        if (exception || nextPc != outBuffer.bprediction[i]) begin
+        if (exception || nextPc != commitBuffer.bprediction[i]) begin
           if (debug) $display("          redirect from 0x%h to 0x%h", pc, nextPc);
 
           redirectQ.enq(tuple3(
             nextPc, epoch[0]+1,
             BranchPredTrain{
-              instrs: Valid(outBuffer.instr),
-              state: outBuffer.bstate,
+              instrs: Valid(commitBuffer.instr),
+              state: commitBuffer.bstate,
               nextPc: nextPc,
               pc: pc
             }
@@ -284,21 +293,22 @@ module mkCPU(CpuIfc);
 
     if (trainHit) begin
       fetch.trainHit(BranchPredTrain{
-        instrs: Valid(outBuffer.instr),
-        state: outBuffer.bstate,
+        instrs: Valid(commitBuffer.instr),
+        state: commitBuffer.bstate,
         nextPc: currentPc,
         pc: commitPc
       });
     end
 
     forwardProgess <= consumed == replicate(False) ? forwardProgess+1 : 0;
-    outBuffer.consume(consumed);
+    wbBuffer.put(commited, commitBuffer.instr);
+    commitBuffer.consume(consumed);
     instret <= instrCounter;
     scoreboard[1] <= score;
     commitPc <= currentPc;
   endrule
 
-  rule dispatch if (inBuffer.mask != replicate(False));
+  rule dispatch if (dispatchBuffer.mask != replicate(False));
     Bool stop = False;
     Bool useMem = False;
     Bool useSys = False;
@@ -306,9 +316,9 @@ module mkCPU(CpuIfc);
     Super#(Bool) consumed = replicate(False);
     Super#(Maybe#(Bit#(32))) moves = replicate(Invalid);
 
-    for (Integer i=0; i < supSize; i = i + 1) if (!stop && inBuffer.mask[i]) begin
-      RvInstr instr = inBuffer.instr[i];
-      let pc = inBuffer.pc[i];
+    for (Integer i=0; i < supSize; i = i + 1) if (!stop && dispatchBuffer.mask[i]) begin
+      RvInstr instr = dispatchBuffer.instr[i];
+      let pc = dispatchBuffer.pc[i];
 
       ArchReg rs1 = instr.rs1;
       ArchReg rs2 = instr.rs2;
@@ -346,17 +356,23 @@ module mkCPU(CpuIfc);
 
       Bool rdy = scoreboard[2][rd] == 0;
 
-      for (Integer j=0; j < i; j = j + 1) if (inBuffer.mask[j]) begin
-        if (rs1 != 0 && rs1 == inBuffer.instr[j].rd && moves[j] == Invalid) rdy1 = False;
-        if (rs2 != 0 && rs2 == inBuffer.instr[j].rd && moves[j] == Invalid) rdy2 = False;
-        if (rd != 0 && rd == inBuffer.instr[j].rd) rdy = False;
+      for (Integer j=0; j < i; j = j + 1) if (dispatchBuffer.mask[j]) begin
+        if (rs1 != 0 && rs1 == dispatchBuffer.instr[j].rd && moves[j] == Invalid) rdy1 = False;
+        if (rs2 != 0 && rs2 == dispatchBuffer.instr[j].rd && moves[j] == Invalid) rdy2 = False;
+        if (rd != 0 && rd == dispatchBuffer.instr[j].rd) rdy = False;
 
-        if (rs1 != 0 && rs1 == inBuffer.instr[j].rd &&& moves[j] matches tagged Valid .d) begin
+        if (
+          rs1 != 0 && rs1 == dispatchBuffer.instr[j].rd &&&
+          moves[j] matches tagged Valid .d
+        ) begin
           rdy1 = True;
           op1 = d;
         end
 
-        if (rs2 != 0 && rs2 == inBuffer.instr[j].rd &&& moves[j] matches tagged Valid .d) begin
+        if (
+          rs2 != 0 && rs2 == dispatchBuffer.instr[j].rd &&&
+          moves[j] matches tagged Valid .d
+        ) begin
           rdy2 = True;
           op2 = d;
         end
@@ -385,30 +401,30 @@ module mkCPU(CpuIfc);
           pc: pc
         };
 
-        alu[i].enter(aluReq, inBuffer.epoch);
+        //alu[i].enter(aluReq, dispatchBuffer.epoch);
 
         if (instr.isSystem) begin
           system.enter(aluReq, Machine);
           useSys = True;
-        end
-
-        if (instr.isMemAccess) begin
-          lsu.enter(aluReq, inBuffer.epoch);
+        end else if (instr.isMemAccess) begin
+          lsu.enter(aluReq, dispatchBuffer.epoch);
           useMem = True;
+        end else begin
+          alu[i].enter(aluReq, dispatchBuffer.epoch);
         end
       end
     end
 
     scoreboard[2] <= score;
-    inBuffer.consume(consumed);
-    outBuffer.put(Bundle{
-      bprediction: inBuffer.bprediction,
-      exception: inBuffer.exception,
-      bstate: inBuffer.bstate,
-      instr: inBuffer.instr,
-      epoch: inBuffer.epoch,
-      cause: inBuffer.cause,
-      pc: inBuffer.pc,
+    dispatchBuffer.consume(consumed);
+    commitBuffer.put(Bundle{
+      bprediction: dispatchBuffer.bprediction,
+      exception: dispatchBuffer.exception,
+      bstate: dispatchBuffer.bstate,
+      instr: dispatchBuffer.instr,
+      epoch: dispatchBuffer.epoch,
+      cause: dispatchBuffer.cause,
+      pc: dispatchBuffer.pc,
       mask: consumed
     });
   endrule

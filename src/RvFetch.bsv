@@ -261,3 +261,43 @@ module mkDispatchBuffer(DispatchBuffer);
     pcBuf <= in.pc;
   endmethod
 endmodule
+
+interface Buffer#(type t);
+  // Give the current values inside the buffer
+  (* always_ready *) method t _read;
+  (* always_ready *) method Super#(Bool) mask;
+
+  // consume some values of the buffer, the values that we consumes mue be coherents:
+  // if `0 <= a < b < supSize` are two indexes such that `self.mask[a] and self.mask[b]`, then we
+  // can't consume `b` before consuming `a`, otherwise we may observe some data hazards...
+  method Action consume(Super#(Bool) msk);
+
+  // Read some values from the decode stage, only called if the fetch buffer is empty
+  method Action put(Super#(Bool) msk, t in);
+endinterface
+
+module mkBuffer(Buffer#(t)) provisos(Bits#(t, tW));
+  Reg#(Super#(Bool)) masks[2] <- mkCReg(2, replicate(False));
+  Reg#(t) value <- mkRegU;
+
+  method _read = value;
+  method mask = masks[0];
+
+  method Action consume(Super#(Bool) consumed);
+    Super#(Bool) newMask = masks[0];
+    Bool found = False;
+
+    for (Integer i=0; i < supSize; i = i + 1) begin
+      dynamicAssert(!found || !newMask[i] || !consumed[i], "Buffer<comsume> incoherent state");
+      if (newMask[i] && !consumed[i]) found = True;
+      if (consumed[i]) newMask[i] = False;
+    end
+
+    masks[0] <= newMask;
+  endmethod
+
+  method Action put(Super#(Bool) msk, t in) if (masks[1] == replicate(False));
+    masks[1] <= msk;
+    value <= in;
+  endmethod
+endmodule
