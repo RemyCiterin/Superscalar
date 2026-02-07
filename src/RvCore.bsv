@@ -34,13 +34,14 @@ endinterface
 module mkCPU(CpuIfc);
   Bool debug = False;
   Bool useForwarding = True;
-  Bool zeroCycleAluForwarding = False;
-  Bool zeroCycleMoveForwarding = False;
 
   Reg#(Bit#(32)) cycle <- mkReg(0);
 
   Reg#(Bit#(32)) instret <- mkReg(0);
 
+  ////////////////////////////////////////////////////////////////////////////
+  // Define system registers
+  ////////////////////////////////////////////////////////////////////////////
   let cycleCsr <- mkCycleCsr;
   let instrCsr <- mkInstructionCounterCsr;
   let system <- mkCsrUnit(List::append(cycleCsr, instrCsr.csrs));
@@ -50,32 +51,86 @@ module mkCPU(CpuIfc);
     cycle <= cycle + 1;
   endrule
 
-  Reg#(Bit#(32)) scoreboard[3] <- mkCReg(3, 0);
-
+  ////////////////////////////////////////////////////////////////////////////
+  // Register file definition (2*n read ports, and n write ports)
+  ////////////////////////////////////////////////////////////////////////////
   MultiRF#(TMul#(2, SupSize), SupSize, ArchReg, Bit#(32))
     regFile <- mkForwardMultiRF(0, 31);
 
-  List#(RWire#(Tuple2#(ArchReg, Bit#(32))))
-    forwarding <- List::replicateM(2*supSize, mkRWire);
-
+  ////////////////////////////////////////////////////////////////////////////
+  // Epoch: eviry instruction with an epoch different than the current counter
+  // must be flush
+  ////////////////////////////////////////////////////////////////////////////
   Reg#(Epoch) epoch[2] <- mkCReg(2, 0);
 
+
+  ////////////////////////////////////////////////////////////////////////////
+  // Pipeline front-end
+  ////////////////////////////////////////////////////////////////////////////
   Fifo#(2, Tuple3#(Bit#(32), Epoch, BranchPredTrain)) redirectQ <- mkFifo;
-
   FetchIfc fetch <- mkFetch;
-
   DecodeIfc decode <- mkDecode;
 
+  ////////////////////////////////////////////////////////////////////////////
+  // Define system registers
+  ////////////////////////////////////////////////////////////////////////////
   DispatchBuffer dispatchBuffer <- mkDispatchBuffer;
   DispatchBuffer commitBuffer <- mkDispatchBuffer;
   Buffer#(Super#(RvInstr)) wbBuffer <- mkBuffer;
 
+  ////////////////////////////////////////////////////////////////////////////
+  // Define execution units
+  ////////////////////////////////////////////////////////////////////////////
   Vector#(SupSize, ExecIfc#(1)) alu <- replicateM(mkExecAlu);
 
   let lsu_ifc <- mkLsu;
   let uart = lsu_ifc.transmit;
   let lsu = lsu_ifc.exec;
 
+  ////////////////////////////////////////////////////////////////////////////
+  // Scoreboard/bypass logic: ensure that an instruction can't start without
+  // knowing it's operands, and propagate operands from the last stages of the
+  // pipeline to the register-read stage.
+  //
+  // The entries of the scoreboard are from oldest to youngest
+  ////////////////////////////////////////////////////////////////////////////
+  List#(RWire#(Tuple2#(ArchReg, Maybe#(Bit#(32)))))
+    scoreboard <- List::replicateM(2*supSize, mkRWire);
+
+  (* fire_when_enabled, no_implicit_conditions *)
+  rule scoreboard_canon;
+    // Stage 2
+    for (Integer i=0; i < supSize; i = i + 1) if (wbBuffer.mask[i]) begin
+      RvInstr instr = wbBuffer[i];
+      Maybe#(Bit#(32)) result = ?;
+      ArchReg rd = instr.rd;
+
+      if (instr.isSystem) result = Invalid;
+      else if (instr.isMemAccess)
+        result = lsu.writeBack.valid ? Valid(lsu.writeBack.result) : Invalid;
+      else result = alu[i].writeBack.valid ? Valid(alu[i].writeBack.result) : Invalid;
+
+      scoreboard[i].wset(tuple2(rd, result));
+    end
+
+    // Stage 1
+    for (Integer i=0; i < supSize; i = i + 1)
+    if (commitBuffer.mask[i] && commitBuffer.epoch == epoch[0]) begin
+      RvInstr instr = commitBuffer.instr[i];
+      Maybe#(Bit#(32)) result = ?;
+      ArchReg rd = instr.rd;
+
+      if (instr.isSystem) result = Invalid;
+      else if (instr.isMemAccess) result = lsu.commit.forward;
+      else result = alu[i].commit.forward;
+
+      scoreboard[supSize+i].wset(tuple2(rd, result));
+    end
+  endrule
+
+  ////////////////////////////////////////////////////////////////////////////
+  // Redirect the fetch stage to a new program counter
+  ////////////////////////////////////////////////////////////////////////////
   rule redirect;
     match {.pc, .epoch, .train} = redirectQ.first;
     fetch.redirect(pc, epoch);
@@ -83,6 +138,9 @@ module mkCPU(CpuIfc);
     redirectQ.deq;
   endrule
 
+  ////////////////////////////////////////////////////////////////////////////
+  // Front-end stages connections
+  ////////////////////////////////////////////////////////////////////////////
   rule fetch2decode;
     let data <- fetch.get;
     decode.put(data);
@@ -93,21 +151,14 @@ module mkCPU(CpuIfc);
     dispatchBuffer.put(data);
   endrule
 
-  if (useForwarding) rule forward;
-    for (Integer i=0; i < supSize; i = i + 1) begin
-      ForwardIfc fwd = alu[i].forward[0];
-
-      if (fwd.valid && fwd.epoch == epoch[0] && fwd.destination != 0) begin
-        forwarding[i].wset(tuple2(fwd.destination, fwd.result));
-      end
-    end
-  endrule
-
+  ////////////////////////////////////////////////////////////////////////////
+  // Write-back instructions: must be in-order as the pipeline may contains
+  // multiple instructions with the same destination register
+  ////////////////////////////////////////////////////////////////////////////
   rule writeBackRl if (wbBuffer.mask != replicate(False));
     Bool stop = False;
     Bool useMem = False;
     Bool useSys = False;
-    Bit#(32) score = scoreboard[0];
     Super#(Bool) consumed = replicate(False);
 
     for (Integer i=0; i < supSize; i = i + 1) if (!stop && wbBuffer.mask[i]) begin
@@ -145,21 +196,21 @@ module mkCPU(CpuIfc);
 
         if (rd != 0) regFile.writePorts[i].request(rd, result);
         consumed[i] = True;
-        score[rd] = 0;
       end
     end
 
     wbBuffer.consume(consumed);
-    scoreboard[0] <= score;
   endrule
 
   Reg#(Bit#(32)) commitPc <- mkReg('h80000000);
 
+  ////////////////////////////////////////////////////////////////////////////
+  // Flush the entries of the commit buffer in case of a misprediction/exception
+  ////////////////////////////////////////////////////////////////////////////
   rule flush if (commitBuffer.mask != replicate(False) && commitBuffer.epoch != epoch[0]);
     Bool stop = False;
     Bool useMem = False;
     Bool useSys = False;
-    Bit#(32) score = scoreboard[1];
     Super#(Bool) consumed = replicate(False);
 
     for (Integer i=0; i < supSize; i = i + 1) if (!stop && commitBuffer.mask[i]) begin
@@ -174,7 +225,6 @@ module mkCPU(CpuIfc);
       if (!rdy) stop = True;
 
       if (rdy) begin
-        score[instr.rd] = 0;
         if (!instr.isMemAccess && !instr.isSystem) alu[i].commit.commit(False);
         if (instr.isMemAccess) lsu.commit.commit(False);
         if (instr.isSystem) system.deq(False);
@@ -185,7 +235,6 @@ module mkCPU(CpuIfc);
     end
 
     commitBuffer.consume(consumed);
-    scoreboard[1] <= score;
   endrule
 
   Reg#(Bit#(32)) forwardProgess <- mkReg(0);
@@ -195,6 +244,10 @@ module mkCPU(CpuIfc);
     $finish();
   endrule
 
+  ////////////////////////////////////////////////////////////////////////////
+  // Send commit-buffer entries to the write-back stage, or redirect the pipeline
+  // in case of an exception/misprediction
+  ////////////////////////////////////////////////////////////////////////////
   rule commit if (
       commitBuffer.mask != replicate(False) && !redirectQ.canDeq && commitBuffer.epoch == epoch[0]
     );
@@ -204,7 +257,6 @@ module mkCPU(CpuIfc);
     Bool useSys = False;
     Bool trainHit = True;
     Bit#(32) currentPc = commitPc;
-    Bit#(32) score = scoreboard[1];
     Bit#(32) instrCounter = instret;
     Super#(Bool) consumed = replicate(False);
     Super#(Bool) commited = replicate(False);
@@ -268,8 +320,6 @@ module mkCPU(CpuIfc);
 
         currentPc = nextPc;
 
-        if (exception) score[instr.rd] = 0;
-
         // Misprediction: redirect pipeline
         if (exception || nextPc != commitBuffer.bprediction[i]) begin
           if (debug) $display("          redirect from 0x%h to 0x%h", pc, nextPc);
@@ -304,17 +354,18 @@ module mkCPU(CpuIfc);
     wbBuffer.put(commited, commitBuffer.instr);
     commitBuffer.consume(consumed);
     instret <= instrCounter;
-    scoreboard[1] <= score;
     commitPc <= currentPc;
   endrule
 
+  ////////////////////////////////////////////////////////////////////////////
+  // Enter new instruction to the pipeline, also detect read-after-write hazard
+  // and forward operands using the values in the scoreboard
+  ////////////////////////////////////////////////////////////////////////////
   rule dispatch if (dispatchBuffer.mask != replicate(False));
     Bool stop = False;
     Bool useMem = False;
     Bool useSys = False;
-    Bit#(32) score = scoreboard[2];
     Super#(Bool) consumed = replicate(False);
-    Super#(Maybe#(Bit#(32))) moves = replicate(Invalid);
 
     for (Integer i=0; i < supSize; i = i + 1) if (!stop && dispatchBuffer.mask[i]) begin
       RvInstr instr = dispatchBuffer.instr[i];
@@ -330,52 +381,28 @@ module mkCPU(CpuIfc);
       if (rs1 == 0) op1 = 0;
       if (rs2 == 0) op2 = 0;
 
-      if (
-        execAlu(AluRequest{instr: instr, rs1: op1, rs2: op2, pc: pc}, False).forward matches
-        tagged Valid .x &&& rd != 0 && zeroCycleAluForwarding
-      ) begin
-        moves[i] = Valid(x);
-      end
 
-      Bool rdy1 = scoreboard[2][rs1] == 0;
-      Bool rdy2 = scoreboard[2][rs2] == 0;
+      Bool rdy = True;
+      Bool rdy1 = True;
+      Bool rdy2 = True;
 
-      for (Integer j=0; j < List::length(forwarding); j = j + 1) begin
-        if (forwarding[j].wget matches tagged Valid {.r, .d} &&& r == rs1) begin
-          moves[i] = Invalid;
-          rdy1 = True;
-          op1 = d;
+      Integer len = List::length(scoreboard);
+      for (Integer j=0; j < len; j = j + 1) begin
+        if (scoreboard[j].wget matches tagged Valid {.r, .d} &&& r != 0 && r == rs1) begin
+          op1 = validValue(d);
+          rdy1 = isValid(d);
         end
 
-        if (forwarding[j].wget matches tagged Valid {.r, .d} &&& r == rs2) begin
-          moves[i] = Invalid;
-          rdy2 = True;
-          op2 = d;
+        if (scoreboard[j].wget matches tagged Valid {.r, .d} &&& r != 0 && r == rs2) begin
+          op2 = validValue(d);
+          rdy2 = isValid(d);
         end
       end
-
-      Bool rdy = scoreboard[2][rd] == 0;
 
       for (Integer j=0; j < i; j = j + 1) if (dispatchBuffer.mask[j]) begin
-        if (rs1 != 0 && rs1 == dispatchBuffer.instr[j].rd && moves[j] == Invalid) rdy1 = False;
-        if (rs2 != 0 && rs2 == dispatchBuffer.instr[j].rd && moves[j] == Invalid) rdy2 = False;
+        if (rs1 != 0 && rs1 == dispatchBuffer.instr[j].rd) rdy1 = False;
+        if (rs2 != 0 && rs2 == dispatchBuffer.instr[j].rd) rdy2 = False;
         if (rd != 0 && rd == dispatchBuffer.instr[j].rd) rdy = False;
-
-        if (
-          rs1 != 0 && rs1 == dispatchBuffer.instr[j].rd &&&
-          moves[j] matches tagged Valid .d
-        ) begin
-          rdy1 = True;
-          op1 = d;
-        end
-
-        if (
-          rs2 != 0 && rs2 == dispatchBuffer.instr[j].rd &&&
-          moves[j] matches tagged Valid .d
-        ) begin
-          rdy2 = True;
-          op2 = d;
-        end
       end
 
       if (!rdy1 || !rdy2) rdy = False;
@@ -389,19 +416,13 @@ module mkCPU(CpuIfc);
 
       if (rdy) begin
         consumed[i] = True;
-        if (rd != 0) score[rd] = 1;
 
-        if (instr.opcode == Move && rd != 0 && zeroCycleMoveForwarding) moves[i] = Valid(op1);
-
-        //$display(cycle, " enter: ", showRvInstr(instr));
         let aluReq = AluRequest{
           instr: instr,
           rs1: op1,
           rs2: op2,
           pc: pc
         };
-
-        //alu[i].enter(aluReq, dispatchBuffer.epoch);
 
         if (instr.isSystem) begin
           system.enter(aluReq, Machine);
@@ -415,7 +436,6 @@ module mkCPU(CpuIfc);
       end
     end
 
-    scoreboard[2] <= score;
     dispatchBuffer.consume(consumed);
     commitBuffer.put(Bundle{
       bprediction: dispatchBuffer.bprediction,

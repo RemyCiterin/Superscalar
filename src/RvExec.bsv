@@ -19,7 +19,10 @@ import TLTypes :: *;
 import TLBram :: *;
 
 interface CommitIfc;
+  // Forwarding signal doesn't depends of the valid signal
   (* always_ready *) method Maybe#(Bit#(32)) forward;
+
+
   (* always_ready *) method CauseException cause;
   (* always_ready *) method Bit#(32) nextPc;
   (* always_ready *) method Bool exception;
@@ -75,7 +78,7 @@ module mkExecAlu(ExecIfc#(1));
   endmethod
 
   interface CommitIfc commit;
-    method forward = alu1.response.forward;
+    method forward = alu1.canDeq ? alu1.response.forward : Invalid;
     method valid = alu1.canDeq && !valid2[1];
     method exception = alu1.response.exception;
     method nextPc = alu1.response.pc;
@@ -183,8 +186,8 @@ module mkLsu(LsuIfc);
 
         cache.deq(True);
         if (request2.store && request2.address == 'h10000000 && mask[0] == 1) begin
-          //$write("%c", data[7:0]);
-          txUart.put(data[7:0]);
+          $write("%c", data[7:0]);
+          //txUart.put(data[7:0]);
           $fflush(stdout);
         end
       endmethod
