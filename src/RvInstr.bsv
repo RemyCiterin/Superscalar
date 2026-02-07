@@ -373,7 +373,6 @@ typedef enum {
 // indirection, it's program counter must also be correctly predicted
 function Bool supportLateIssue(Operation opcode);
   return case (opcode) matches
-    Lui:    True;
     Move:   True;
     Auipc:  True;
     Add:    True;
