@@ -227,7 +227,7 @@ pub const ReduceAll = struct {
 
     pub fn compute_partial(i: usize, start: usize, stop: usize) void {
         for (start..stop) |j| {
-            acc += lhs[i].value + rhs[j].value;
+            acc += lhs[i].value * rhs[j].value;
         }
     }
 };

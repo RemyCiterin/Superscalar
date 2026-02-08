@@ -18,10 +18,9 @@ import Connectable :: *;
 import TLTypes :: *;
 import TLBram :: *;
 
-interface CommitIfc;
+interface ExecStage1;
   // Forwarding signal doesn't depends of the valid signal
   (* always_ready *) method Maybe#(Bit#(32)) forward;
-
 
   (* always_ready *) method CauseException cause;
   (* always_ready *) method Bit#(32) nextPc;
@@ -30,21 +29,10 @@ interface CommitIfc;
   method Action commit(Bool keep);
 endinterface
 
-interface WriteBackIfc;
+interface ExecStage2;
   (* always_ready *) method Bit#(32) result;
   (* always_ready *) method Bool valid;
   method Action deq;
-endinterface
-
-interface ForwardIfc;
-  (* always_ready *) method ArchReg destination;
-  (* always_ready *) method Bit#(32) result;
-  (* always_ready *) method Epoch epoch;
-  (* always_ready *) method Bool valid;
-endinterface
-
-interface WakeupIfc;
-  (* always_ready *) method Action request(ArchReg r, Bit#(32) d);
 endinterface
 
 interface ExecIfc#(numeric type numFwd);
@@ -53,12 +41,10 @@ interface ExecIfc#(numeric type numFwd);
   method Bool canEnter;
 
   // Stage 2: resolve control flow
-  interface CommitIfc commit;
+  interface ExecStage1 exec1;
 
   // Stage 3: write back the result
-  interface WriteBackIfc writeBack;
-
-  interface Vector#(numFwd, ForwardIfc) forward;
+  interface ExecStage2 exec2;
 endinterface
 
 (* synthesize *)
@@ -77,7 +63,7 @@ module mkExecAlu(ExecIfc#(1));
     epoch1 <= ep;
   endmethod
 
-  interface CommitIfc commit;
+  interface ExecStage1 exec1;
     method forward = alu1.canDeq ? alu1.response.forward : Invalid;
     method valid = alu1.canDeq && !valid2[1];
     method exception = alu1.response.exception;
@@ -91,14 +77,7 @@ module mkExecAlu(ExecIfc#(1));
     endmethod
   endinterface
 
-  interface forward = vec(interface ForwardIfc;
-    method valid = isJust(alu1.response.forward) && alu1.canDeq;
-    method result = unJust(alu1.response.forward);
-    method destination = request1.instr.rd;
-    method epoch = epoch1;
-  endinterface);
-
-  interface WriteBackIfc writeBack;
+  interface ExecStage2 exec2;
     method valid = valid2[0];
     method result = value2;
 
@@ -157,7 +136,7 @@ module mkLsu(LsuIfc);
       pc1 <= req.pc;
     endmethod
 
-    interface CommitIfc commit;
+    interface ExecStage1 exec1;
       method forward = Invalid;
       method nextPc = pc1 + 4;
       method cause =
@@ -173,9 +152,7 @@ module mkLsu(LsuIfc);
       endmethod
     endinterface
 
-    interface forward = newVector;
-
-    interface WriteBackIfc writeBack;
+    interface ExecStage2 exec2;
       method result = lsuRequestRd(request2, cache.response);
       method valid = cache.valid;
 

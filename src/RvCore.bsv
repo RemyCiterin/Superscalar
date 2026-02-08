@@ -101,14 +101,14 @@ module mkCPU(CpuIfc);
   rule scoreboard_canon;
     // Stage 2
     for (Integer i=0; i < supSize; i = i + 1) if (wbBuffer.mask[i]) begin
-      RvInstr instr = wbBuffer[i];
       Maybe#(Bit#(32)) result = ?;
+      RvInstr instr = wbBuffer[i];
       ArchReg rd = instr.rd;
 
       if (instr.isSystem) result = Invalid;
       else if (instr.isMemAccess)
-        result = lsu.writeBack.valid ? Valid(lsu.writeBack.result) : Invalid;
-      else result = alu[i].writeBack.valid ? Valid(alu[i].writeBack.result) : Invalid;
+        result = lsu.exec2.valid ? Valid(lsu.exec2.result) : Invalid;
+      else result = alu[i].exec2.valid ? Valid(alu[i].exec2.result) : Invalid;
 
       scoreboard[i].wset(tuple2(rd, result));
     end
@@ -121,8 +121,8 @@ module mkCPU(CpuIfc);
       ArchReg rd = instr.rd;
 
       if (instr.isSystem) result = Invalid;
-      else if (instr.isMemAccess) result = lsu.commit.forward;
-      else result = alu[i].commit.forward;
+      else if (instr.isMemAccess) result = lsu.exec1.forward;
+      else result = alu[i].exec1.forward;
 
       scoreboard[supSize+i].wset(tuple2(rd, result));
     end
@@ -169,8 +169,8 @@ module mkCPU(CpuIfc);
       if (instr.isSystem && useSys) rdy = False;
       if (instr.isMemAccess && useMem) rdy = False;
       if (instr.isSystem && !csrOut.canDeq) rdy = False;
-      if (instr.isMemAccess && !lsu.writeBack.valid) rdy = False;
-      if (!instr.isMemAccess && !instr.isSystem && !alu[i].writeBack.valid) rdy = False;
+      if (instr.isMemAccess && !lsu.exec2.valid) rdy = False;
+      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec2.valid) rdy = False;
 
       if (!rdy) stop = True;
 
@@ -178,16 +178,16 @@ module mkCPU(CpuIfc);
         Bit#(32) result = ?;
 
         if (instr.isMemAccess) begin
-          result = lsu.writeBack.result;
-          lsu.writeBack.deq;
+          result = lsu.exec2.result;
+          lsu.exec2.deq;
           useMem = True;
         end else if (instr.isSystem) begin
           result = csrOut.first;
           useSys = True;
           csrOut.deq;
         end else begin
-          result = alu[i].writeBack.result;
-          alu[i].writeBack.deq;
+          result = alu[i].exec2.result;
+          alu[i].exec2.deq;
         end
 
         if (debug && rd != 0) begin
@@ -220,13 +220,13 @@ module mkCPU(CpuIfc);
       if (instr.isSystem && useSys) rdy = False;
       if (instr.isMemAccess && useMem) rdy = False;
       if (instr.isSystem && !system.canDeq) rdy = False;
-      if (instr.isMemAccess && !lsu.commit.valid) rdy = False;
-      if (!instr.isMemAccess && !instr.isSystem && !alu[i].commit.valid) rdy = False;
+      if (instr.isMemAccess && !lsu.exec1.valid) rdy = False;
+      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec1.valid) rdy = False;
       if (!rdy) stop = True;
 
       if (rdy) begin
-        if (!instr.isMemAccess && !instr.isSystem) alu[i].commit.commit(False);
-        if (instr.isMemAccess) lsu.commit.commit(False);
+        if (!instr.isMemAccess && !instr.isSystem) alu[i].exec1.commit(False);
+        if (instr.isMemAccess) lsu.exec1.commit(False);
         if (instr.isSystem) system.deq(False);
         if (instr.isMemAccess) useMem = True;
         if (instr.isSystem) useSys = True;
@@ -270,21 +270,21 @@ module mkCPU(CpuIfc);
 
       let rdy = !(instr.isMemAccess && useMem);
 
-      if (!instr.isMemAccess && !instr.isSystem && !alu[i].commit.valid) rdy = False;
-      if (instr.isMemAccess && !lsu.commit.valid) rdy = False;
+      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec1.valid) rdy = False;
+      if (instr.isMemAccess && !lsu.exec1.valid) rdy = False;
       if (instr.isSystem && !system.canDeq) rdy = False;
       if (instr.isSystem && !csrOut.canEnq) rdy = False;
       if (instr.isSystem && useSys) rdy = False;
       if (!rdy) stop = True;
 
-      let exception = alu[i].commit.exception;
-      let nextPc = alu[i].commit.nextPc;
-      let cause = alu[i].commit.cause;
+      let exception = alu[i].exec1.exception;
+      let nextPc = alu[i].exec1.nextPc;
+      let cause = alu[i].exec1.cause;
 
       if (instr.isMemAccess) begin
-        exception = lsu.commit.exception;
-        nextPc = lsu.commit.nextPc;
-        cause = lsu.commit.cause;
+        exception = lsu.exec1.exception;
+        nextPc = lsu.exec1.nextPc;
+        cause = lsu.exec1.cause;
       end
 
       if (instr.isSystem) begin
@@ -308,14 +308,14 @@ module mkCPU(CpuIfc);
         if (exception) $display("pc: %h cycle: %d instret: %d", pc, cycle, instret);
 
         if (instr.isMemAccess) begin
-          lsu.commit.commit(!exception);
+          lsu.exec1.commit(!exception);
           useMem = True;
         end else if (instr.isSystem) begin
           system.deq(!exception);
           csrOut.enq(system.response.rd);
           useSys = True;
         end else begin
-          alu[i].commit.commit(!exception);
+          alu[i].exec1.commit(!exception);
         end
 
         currentPc = nextPc;
