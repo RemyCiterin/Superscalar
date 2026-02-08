@@ -9,6 +9,9 @@ const print = UART.putString;
 
 const RV = @import("riscv.zig");
 
+const fixed_t = @import("fpoint.zig");
+const complex_t = fixed_t.complex_t;
+
 pub const std_options = .{
     .log_level = .info,
     .logFn = log,
@@ -126,6 +129,19 @@ pub fn block_optim(x: usize) usize {
     return y;
 }
 
+const FFT_N = 16;
+var X: [FFT_N]complex_t = blk: {
+    @setEvalBranchQuota(10 * FFT_N);
+    var A: [FFT_N]complex_t = undefined;
+    for (0..FFT_N) |i| {
+        A[i] = complex_t.fromFloats(std.math.cos(
+            @as(f32, @floatFromInt(i)) * 2 * 3.14159 / FFT_N,
+        ), 0.0);
+    }
+    break :blk A;
+};
+var F: [FFT_N]complex_t = undefined;
+
 pub export fn kernel_main() align(16) callconv(.C) void {
     const logger = std.log.scoped(.kernel);
     logger.info("=== Start DOoOM ===", .{});
@@ -147,6 +163,18 @@ pub export fn kernel_main() align(16) callconv(.C) void {
     asm volatile ("fence" ::: "memory");
     matmul(n, &Ctx.A, &Ctx.B, &Ctx.C);
     asm volatile ("fence" ::: "memory");
+
+    asm volatile ("fence" ::: "memory");
+    //complex_t.dft(FFT_N, X[0..], F[0..]);
+    //complex_t.fft(kalloc, X[0..], F[0..]) catch unreachable;
+    complex_t.radix2(X[0..], F[0..]);
+    asm volatile ("fence" ::: "memory");
+
+    for (0..FFT_N) |i| {
+        UART.writer.print("{}:\n", .{i}) catch unreachable;
+        UART.writer.print(" re: {}\n", .{F[i].re.toFloat()}) catch unreachable;
+        UART.writer.print(" im: {}\n", .{F[i].im.toFloat()}) catch unreachable;
+    }
 
     ReduceAll.init();
     asm volatile ("fence" ::: "memory");

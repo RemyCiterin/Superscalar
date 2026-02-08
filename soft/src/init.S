@@ -124,7 +124,7 @@ reboot_message2:
 
 .section .bss
 .align 4
-  .skip 0x1000
+  .skip 0x2000
 stack_top:
   .skip 0x4
 
