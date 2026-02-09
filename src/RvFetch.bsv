@@ -43,6 +43,7 @@ endmodule
 
 typedef struct {
   Super#(Bool) mask;
+  Super#(Bit#(32)) uid;
   Super#(Bit#(32)) data;
   Super#(Bit#(32)) bprediction;
   Super#(CauseException) cause;
@@ -60,12 +61,16 @@ interface FetchIfc;
   method Action trainHit(BranchPredTrain infos);
 
   interface TLMaster#(32, 32, 8, 8, 0) master;
+
+  (* always_ready *) method Bit#(32) numMisPred;
 endinterface
 
 (* synthesize *)
 module mkFetch(FetchIfc);
   Reg#(Epoch) nextEpoch[3] <- mkCReg(3, 0);
   Reg#(Bit#(32)) nextPc[3] <- mkCReg(3, 'h80000000);
+
+  Reg#(Bit#(32)) uid <- mkReg(0);
 
   Bool bpredEnabled = True;
 
@@ -93,16 +98,20 @@ module mkFetch(FetchIfc);
 
   interface master = icache.master;
 
+  method numMisPred = bpred.numMisPred;
+
   method ActionValue#(FetchOutput) get if (queue.canDeq && icache.valid);
     match {.pc, .epoch} = queue.first;
     queue.deq;
 
+    Bit#(32) currentUid = uid;
     Bit#(SupLogSize) laneBaseIndex = truncate(pc >> 2);
     Bit#(32) basePc = pc & ~pcMask;
 
     BranchPredState bstate = ?;
     Super#(Bool) mask = newVector;
     Super#(Bit#(32)) pcVec = newVector;
+    Super#(Bit#(32)) uidVec = newVector;
     Super#(Bit#(32)) bprediction = newVector;
     for (Integer i=0; i < supSize; i = i + 1) begin
       Bool exception = False;
@@ -125,7 +134,13 @@ module mkFetch(FetchIfc);
       end
     end
 
+    for (Integer i=0; i < supSize; i = i + 1) if (mask[i]) begin
+      currentUid = currentUid + 1;
+      uidVec[i] = currentUid;
+    end
+
     icache.deq;
+    uid <= currentUid;
 
     return FetchOutput {
       exception: replicate(False),
@@ -134,6 +149,7 @@ module mkFetch(FetchIfc);
       bstate: bstate,
       data: icache.response,
       epoch: epoch,
+      uid: uidVec,
       mask: mask,
       pc: pcVec
     };
@@ -155,6 +171,7 @@ typedef struct {
   Super#(CauseException) cause;
   BranchPredState bstate;
   Super#(Bool) exception;
+  Super#(Bit#(32)) uid;
   Super#(Bit#(32)) pc;
   Epoch epoch;
 } Bundle deriving(Bits);
@@ -198,6 +215,7 @@ module mkDecode(DecodeIfc);
       mask: in.mask,
       cause: cause,
       instr: instr,
+      uid: in.uid,
       pc: in.pc
     };
   endmethod
@@ -223,6 +241,7 @@ module mkDispatchBuffer(DispatchBuffer);
   Reg#(Super#(Bool)) exceptionBuf <- mkRegU;
   Reg#(BranchPredState) bstateBuf <- mkRegU;
   Reg#(Super#(RvInstr)) instrBuf <- mkRegU;
+  Reg#(Super#(Bit#(32))) uidBuf <- mkRegU;
   Reg#(Super#(Bit#(32))) pcBuf <- mkRegU;
   Reg#(Epoch) epochBuf <- mkRegU;
 
@@ -234,6 +253,7 @@ module mkDispatchBuffer(DispatchBuffer);
     instr: instrBuf,
     epoch: epochBuf,
     mask: masks[0],
+    uid: uidBuf,
     pc: pcBuf
   };
 
@@ -258,6 +278,7 @@ module mkDispatchBuffer(DispatchBuffer);
     epochBuf <= in.epoch;
     causeBuf <= in.cause;
     masks[1] <= in.mask;
+    uidBuf <= in.uid;
     pcBuf <= in.pc;
   endmethod
 endmodule

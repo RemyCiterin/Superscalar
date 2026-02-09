@@ -1,4 +1,5 @@
 import ForwardBRAM::*;
+import ConfigReg::*;
 import BRAMCore::*;
 import RvInstr::*;
 import RegFile::*;
@@ -255,6 +256,8 @@ interface BranchPred;
 
   method Action trainHit(BranchPredTrain infos);
   method Action trainMis(BranchPredTrain infos);
+
+  (* always_ready *) method Bit#(32) numMisPred;
 endinterface
 
 (* synthesize *)
@@ -263,8 +266,8 @@ module mkBranchPredictor(BranchPred);
   let ght <- mkGlobalHistoryTable;
   let ras <- mkReturnAddressStack;
 
-  Reg#(Bit#(32)) numHit <- mkReg(0);
-  Reg#(Bit#(32)) numMis <- mkReg(0);
+  Reg#(Bit#(32)) numHit <- mkConfigReg(0);
+  Reg#(Bit#(32)) numMis <- mkConfigReg(0);
 
   Reg#(History) history[2] <- mkCReg(2, 0);
 
@@ -272,6 +275,8 @@ module mkBranchPredictor(BranchPred);
 
   // Give `pc` the offset of an instruction in a lane
   Bit#(32) laneMask = ~((1 << (supLogSize+2)) - 1);
+
+  method numMisPred = numMis;
 
   method Action lookup(Bit#(32) pc);
     ght.lookup(pc & laneMask, history[1]);
