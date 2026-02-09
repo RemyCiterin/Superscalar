@@ -31,15 +31,29 @@ interface CpuIfc;
   interface TLMaster#(32, 32, 8, 8, 0) dmaster;
 endinterface
 
+typedef struct {
+  Super#(RvInstr) instr;
+  Super#(Bit#(32)) uid;
+} ExecEntry deriving(Bits);
+
 (* synthesize *)
 module mkCPU(CpuIfc);
   Bool debug = False;
+  Bool logTrace = False;
+  Bool useLateIssue = True;
   Bool useForwarding = True;
-  Bool useLateIssue = False;
 
   Reg#(Bit#(32)) cycle <- mkConfigReg(0);
 
   Reg#(Bit#(32)) instret <- mkConfigReg(0);
+
+  Reg#(File) trace_file <- mkReg(InvalidFile);
+
+  rule init_log if (cycle == 0 && logTrace);
+    let log <- $fopen("trace.txt");
+    $fdisplay(log, "Kanata 0004");
+    trace_file <= log;
+  endrule
 
   ////////////////////////////////////////////////////////////////////////////
   // Define system registers
@@ -79,8 +93,8 @@ module mkCPU(CpuIfc);
   ////////////////////////////////////////////////////////////////////////////
   DispatchBuffer dispatchBuffer <- mkDispatchBuffer;
   DispatchBuffer commitBuffer <- mkDispatchBuffer;
-  Buffer#(Super#(RvInstr)) execBuffer <- mkBuffer;
-  Buffer#(Super#(RvInstr)) wbBuffer <- mkBuffer;
+  Buffer#(ExecEntry) execBuffer <- mkBuffer;
+  Buffer#(ExecEntry) wbBuffer <- mkBuffer;
 
   ////////////////////////////////////////////////////////////////////////////
   // Define execution units
@@ -110,8 +124,8 @@ module mkCPU(CpuIfc);
 
     // Stage 2
     for (Integer i=0; i < supSize; i = i + 1) if (wbBuffer.mask[i]) begin
+      RvInstr instr = wbBuffer.instr[i];
       Maybe#(Bit#(32)) result = ?;
-      RvInstr instr = wbBuffer[i];
       ArchReg rd = instr.rd;
 
       if (instr.isSystem) result = Invalid;
@@ -124,14 +138,14 @@ module mkCPU(CpuIfc);
       for (Integer j=0; j < supSize; j = j + 1) begin
         if (rd == commitBuffer.instr[j].rs1) wakeupRs1Ex1[j] = result;
         if (rd == commitBuffer.instr[j].rs2) wakeupRs2Ex1[j] = result;
-        if (rd == execBuffer[j].rs1) wakeupRs1Ex2[j] = result;
-        if (rd == execBuffer[j].rs2) wakeupRs2Ex2[j] = result;
+        if (rd == execBuffer.instr[j].rs1) wakeupRs1Ex2[j] = result;
+        if (rd == execBuffer.instr[j].rs2) wakeupRs2Ex2[j] = result;
       end
     end
 
     // Stage 2
     for (Integer i=0; i < supSize; i = i + 1) if (execBuffer.mask[i]) begin
-      RvInstr instr = execBuffer[i];
+      RvInstr instr = execBuffer.instr[i];
       Maybe#(Bit#(32)) result = ?;
       ArchReg rd = instr.rd;
 
@@ -144,8 +158,8 @@ module mkCPU(CpuIfc);
       for (Integer j=0; j < supSize; j = j + 1) begin
         if (rd == commitBuffer.instr[j].rs1) wakeupRs1Ex1[j] = result;
         if (rd == commitBuffer.instr[j].rs2) wakeupRs2Ex1[j] = result;
-        if (j > i && rd == execBuffer[j].rs1) wakeupRs1Ex2[j] = result;
-        if (j > i && rd == execBuffer[j].rs2) wakeupRs2Ex2[j] = result;
+        if (j > i && rd == execBuffer.instr[j].rs1) wakeupRs1Ex2[j] = result;
+        if (j > i && rd == execBuffer.instr[j].rs2) wakeupRs2Ex2[j] = result;
       end
     end
 
@@ -192,11 +206,23 @@ module mkCPU(CpuIfc);
   rule fetch2decode;
     let data <- fetch.get;
     decode.put(data);
+
+    if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+    for (Integer i=0; i < supSize; i = i + 1) if (data.mask[i]) begin
+      if (logTrace) $fdisplay(trace_file, "I %d %d 0", data.uid[i], data.uid[i]);
+      if (logTrace) $fdisplay(trace_file, "S %d 0 D", data.uid[i]);
+    end
   endrule
 
   rule decode2buffer;
     let data <- decode.get;
     dispatchBuffer.put(data);
+
+    if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+    for (Integer i=0; i < supSize; i = i + 1) if (data.mask[i]) begin
+      if (logTrace) $fdisplay(trace_file, "E %d 0 D", data.uid[i]);
+      if (logTrace) $fdisplay(trace_file, "S %d 0 Is", data.uid[i]);
+    end
   endrule
 
   ////////////////////////////////////////////////////////////////////////////
@@ -209,7 +235,8 @@ module mkCPU(CpuIfc);
     Super#(Bool) consumed = replicate(False);
 
     for (Integer i=0; i < supSize; i = i + 1) if (!stop && execBuffer.mask[i]) begin
-      RvInstr instr = execBuffer[i];
+      RvInstr instr = execBuffer.instr[i];
+      Bit#(32) uid = execBuffer.uid[i];
 
       Bool rdy = True;
       if (instr.isSystem && useSys) rdy = False;
@@ -234,6 +261,9 @@ module mkCPU(CpuIfc);
         end
 
         consumed[i] = True;
+        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 E1", uid);
+        if (logTrace) $fdisplay(trace_file, "S %d 0 Wb", uid);
       end
     end
 
@@ -252,7 +282,8 @@ module mkCPU(CpuIfc);
     Super#(Bool) consumed = replicate(False);
 
     for (Integer i=0; i < supSize; i = i + 1) if (!stop && wbBuffer.mask[i]) begin
-      RvInstr instr = wbBuffer[i];
+      RvInstr instr = wbBuffer.instr[i];
+      Bit#(32) uid = wbBuffer.uid[i];
       ArchReg rd = instr.rd;
 
       Bool rdy = True;
@@ -286,6 +317,9 @@ module mkCPU(CpuIfc);
 
         if (rd != 0) regFile.writePorts[i].request(rd, result);
         consumed[i] = True;
+
+        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 Wb", uid);
       end
     end
 
@@ -305,6 +339,7 @@ module mkCPU(CpuIfc);
 
     for (Integer i=0; i < supSize; i = i + 1) if (!stop && commitBuffer.mask[i]) begin
       RvInstr instr = commitBuffer.instr[i];
+      Bit#(32) uid = commitBuffer.uid[i];
 
       Bool rdy = True;
       if (instr.isSystem && useSys) rdy = False;
@@ -321,6 +356,9 @@ module mkCPU(CpuIfc);
         if (instr.isMemAccess) useMem = True;
         if (instr.isSystem) useSys = True;
         consumed[i] = True;
+
+        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 C", uid);
       end
     end
 
@@ -353,6 +391,7 @@ module mkCPU(CpuIfc);
 
     for (Integer i=0; i < supSize; i = i + 1) if (!stop && commitBuffer.mask[i]) begin
       RvInstr instr = commitBuffer.instr[i];
+      Bit#(32) uid = commitBuffer.uid[i];
       let pc = commitBuffer.pc[i];
       ArchReg rd = instr.rd;
 
@@ -396,6 +435,10 @@ module mkCPU(CpuIfc);
         if (debug) $display(cycle, " commit 0x%h: ", pc, showRvInstr(instr));
 
         if (exception) $display("pc: %h cycle: %d instret: %d", pc, cycle, instret);
+
+        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 C", uid);
+        if (!exception && logTrace) $fdisplay(trace_file, "S %d 0 E1", uid);
 
         if (instr.isMemAccess) begin
           lsu.exec1.commit(!exception);
@@ -441,7 +484,7 @@ module mkCPU(CpuIfc);
     end
 
     forwardProgess <= consumed == replicate(False) ? forwardProgess+1 : 0;
-    execBuffer.put(commited, commitBuffer.instr);
+    execBuffer.put(commited, ExecEntry{instr: commitBuffer.instr, uid: commitBuffer.uid});
     commitBuffer.consume(consumed);
     instret <= instrCounter;
     commitPc <= currentPc;
@@ -462,6 +505,7 @@ module mkCPU(CpuIfc);
 
     for (Integer i=0; i < supSize; i = i + 1) if (!stop && dispatchBuffer.mask[i]) begin
       RvInstr instr = dispatchBuffer.instr[i];
+      Bit#(32) uid = dispatchBuffer.uid[i];
       let pc = dispatchBuffer.pc[i];
 
       ArchReg rs1 = instr.rs1;
@@ -493,9 +537,18 @@ module mkCPU(CpuIfc);
       end
 
       for (Integer j=0; j < i; j = j + 1) if (dispatchBuffer.mask[j]) begin
-        if (rs1 != 0 && rs1 == dispatchBuffer.instr[j].rd) rdy1 = False;
-        if (rs2 != 0 && rs2 == dispatchBuffer.instr[j].rd) rdy2 = False;
+        //if (rs1 != 0 && rs1 == dispatchBuffer.instr[j].rd) rdy1 = False;
+        //if (rs2 != 0 && rs2 == dispatchBuffer.instr[j].rd) rdy2 = False;
         if (rd != 0 && rd == dispatchBuffer.instr[j].rd) rdy = False;
+
+        if (rs1 != 0 && rs1 == dispatchBuffer.instr[j].rd && dispatchBuffer.instr[j].opcode == Load)
+          rdy1 = False;
+        if (rs2 != 0 && rs2 == dispatchBuffer.instr[j].rd && dispatchBuffer.instr[j].opcode == Load)
+          rdy2 = False;
+        if (rs1 != 0 && rs1 == dispatchBuffer.instr[j].rd && dispatchBuffer.instr[j].opcode != Load)
+          rdy = False;
+        if (rs2 != 0 && rs2 == dispatchBuffer.instr[j].rd && dispatchBuffer.instr[j].opcode != Load)
+          rdy = False;
       end
 
       if ((!rdy1 || !rdy2) && !useLateIssue) rdy = False;
@@ -510,6 +563,17 @@ module mkCPU(CpuIfc);
 
       if (rdy) begin
         consumed[i] = True;
+        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 Is", uid);
+        if (logTrace) $fdisplay(trace_file, "S %d 0 C", uid);
+        if (logTrace) $fdisplay(
+          trace_file,
+          "L %d 0 0x%h: ", uid, pc,
+          " ", fshow(instr.opcode),
+          " ", showReg(rd),
+          " ", showReg(rs1),
+          " ", showReg(rs2)
+        );
 
         let aluReq = AluRequest{
           instr: instr,
@@ -538,6 +602,7 @@ module mkCPU(CpuIfc);
       instr: dispatchBuffer.instr,
       epoch: dispatchBuffer.epoch,
       cause: dispatchBuffer.cause,
+      uid: dispatchBuffer.uid,
       pc: dispatchBuffer.pc,
       mask: consumed
     });
