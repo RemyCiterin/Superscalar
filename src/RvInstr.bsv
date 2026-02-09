@@ -400,6 +400,8 @@ function Bool supportLateIssue(Operation opcode);
     Zexth:  True;
     Orcb:   True;
     Rev8:   True;
+    Rol:    True;
+    Ror:    True;
     default: False;
   endcase;
 endfunction

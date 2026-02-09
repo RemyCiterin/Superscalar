@@ -2,6 +2,7 @@ import MultiRegFile :: *;
 import RvBranchPred :: *;
 import ForwardBRAM :: *;
 import BuildVector :: *;
+import ConfigReg :: *;
 import BRAMCore :: *;
 import RvDCache :: *;
 import RegFile :: *;
@@ -34,10 +35,11 @@ endinterface
 module mkCPU(CpuIfc);
   Bool debug = False;
   Bool useForwarding = True;
+  Bool useLateIssue = False;
 
-  Reg#(Bit#(32)) cycle <- mkReg(0);
+  Reg#(Bit#(32)) cycle <- mkConfigReg(0);
 
-  Reg#(Bit#(32)) instret <- mkReg(0);
+  Reg#(Bit#(32)) instret <- mkConfigReg(0);
 
   ////////////////////////////////////////////////////////////////////////////
   // Define system registers
@@ -45,7 +47,8 @@ module mkCPU(CpuIfc);
   let cycleCsr <- mkCycleCsr;
   let instrCsr <- mkInstructionCounterCsr;
   let system <- mkCsrUnit(List::append(cycleCsr, instrCsr.csrs));
-  Fifo#(1, Bit#(32)) csrOut <- mkPipelineFifo;
+  Fifo#(1, Bit#(32)) csrExec2 <- mkPipelineFifo;
+  Fifo#(1, Bit#(32)) csrExec3 <- mkPipelineFifo;
 
   rule incrCycle;
     cycle <= cycle + 1;
@@ -76,6 +79,7 @@ module mkCPU(CpuIfc);
   ////////////////////////////////////////////////////////////////////////////
   DispatchBuffer dispatchBuffer <- mkDispatchBuffer;
   DispatchBuffer commitBuffer <- mkDispatchBuffer;
+  Buffer#(Super#(RvInstr)) execBuffer <- mkBuffer;
   Buffer#(Super#(RvInstr)) wbBuffer <- mkBuffer;
 
   ////////////////////////////////////////////////////////////////////////////
@@ -95,10 +99,15 @@ module mkCPU(CpuIfc);
   // The entries of the scoreboard are from oldest to youngest
   ////////////////////////////////////////////////////////////////////////////
   List#(RWire#(Tuple2#(ArchReg, Maybe#(Bit#(32)))))
-    scoreboard <- List::replicateM(2*supSize, mkRWire);
+    scoreboard <- List::replicateM(3*supSize, mkRWire);
 
   (* fire_when_enabled, no_implicit_conditions *)
   rule scoreboard_canon;
+    Vector#(SupSize, Maybe#(Bit#(32))) wakeupRs1Ex1 = replicate(Invalid);
+    Vector#(SupSize, Maybe#(Bit#(32))) wakeupRs2Ex1 = replicate(Invalid);
+    Vector#(SupSize, Maybe#(Bit#(32))) wakeupRs1Ex2 = replicate(Invalid);
+    Vector#(SupSize, Maybe#(Bit#(32))) wakeupRs2Ex2 = replicate(Invalid);
+
     // Stage 2
     for (Integer i=0; i < supSize; i = i + 1) if (wbBuffer.mask[i]) begin
       Maybe#(Bit#(32)) result = ?;
@@ -107,10 +116,37 @@ module mkCPU(CpuIfc);
 
       if (instr.isSystem) result = Invalid;
       else if (instr.isMemAccess)
-        result = lsu.exec2.valid ? Valid(lsu.exec2.result) : Invalid;
-      else result = alu[i].exec2.valid ? Valid(alu[i].exec2.result) : Invalid;
+        result = lsu.exec3.valid ? Valid(lsu.exec3.result) : Invalid;
+      else result = alu[i].exec3.valid ? Valid(alu[i].exec3.result) : Invalid;
 
       scoreboard[i].wset(tuple2(rd, result));
+
+      for (Integer j=0; j < supSize; j = j + 1) begin
+        if (rd == commitBuffer.instr[j].rs1) wakeupRs1Ex1[j] = result;
+        if (rd == commitBuffer.instr[j].rs2) wakeupRs2Ex1[j] = result;
+        if (rd == execBuffer[j].rs1) wakeupRs1Ex2[j] = result;
+        if (rd == execBuffer[j].rs2) wakeupRs2Ex2[j] = result;
+      end
+    end
+
+    // Stage 2
+    for (Integer i=0; i < supSize; i = i + 1) if (execBuffer.mask[i]) begin
+      RvInstr instr = execBuffer[i];
+      Maybe#(Bit#(32)) result = ?;
+      ArchReg rd = instr.rd;
+
+      if (instr.isSystem) result = Invalid;
+      else if (instr.isMemAccess) result = lsu.exec2.forward;
+      else result = alu[i].exec2.forward;
+
+      scoreboard[supSize+i].wset(tuple2(rd, result));
+
+      for (Integer j=0; j < supSize; j = j + 1) begin
+        if (rd == commitBuffer.instr[j].rs1) wakeupRs1Ex1[j] = result;
+        if (rd == commitBuffer.instr[j].rs2) wakeupRs2Ex1[j] = result;
+        if (j > i && rd == execBuffer[j].rs1) wakeupRs1Ex2[j] = result;
+        if (j > i && rd == execBuffer[j].rs2) wakeupRs2Ex2[j] = result;
+      end
     end
 
     // Stage 1
@@ -124,7 +160,19 @@ module mkCPU(CpuIfc);
       else if (instr.isMemAccess) result = lsu.exec1.forward;
       else result = alu[i].exec1.forward;
 
-      scoreboard[supSize+i].wset(tuple2(rd, result));
+      scoreboard[2*supSize+i].wset(tuple2(rd, result));
+
+      for (Integer j=0; j < supSize; j = j + 1) begin
+        if (j > i && rd == commitBuffer.instr[j].rs1) wakeupRs1Ex1[j] = result;
+        if (j > i && rd == commitBuffer.instr[j].rs2) wakeupRs2Ex1[j] = result;
+      end
+    end
+
+    for (Integer j=0; j < supSize; j = j + 1) if (useLateIssue) begin
+      if (wakeupRs1Ex1[j] matches tagged Valid .d) alu[j].exec1.wakeupRs1(d);
+      if (wakeupRs2Ex1[j] matches tagged Valid .d) alu[j].exec1.wakeupRs2(d);
+      if (wakeupRs1Ex2[j] matches tagged Valid .d) alu[j].exec2.wakeupRs1(d);
+      if (wakeupRs2Ex2[j] matches tagged Valid .d) alu[j].exec2.wakeupRs2(d);
     end
   endrule
 
@@ -152,6 +200,48 @@ module mkCPU(CpuIfc);
   endrule
 
   ////////////////////////////////////////////////////////////////////////////
+  // Execution stage to write-back stage
+  ////////////////////////////////////////////////////////////////////////////
+  rule execRl if (execBuffer.mask != replicate(False));
+    Bool stop = False;
+    Bool useMem = False;
+    Bool useSys = False;
+    Super#(Bool) consumed = replicate(False);
+
+    for (Integer i=0; i < supSize; i = i + 1) if (!stop && execBuffer.mask[i]) begin
+      RvInstr instr = execBuffer[i];
+
+      Bool rdy = True;
+      if (instr.isSystem && useSys) rdy = False;
+      if (instr.isMemAccess && useMem) rdy = False;
+      if (instr.isSystem && !csrExec2.canDeq) rdy = False;
+      if (instr.isSystem && !csrExec3.canEnq) rdy = False;
+      if (instr.isMemAccess && !lsu.exec2.valid) rdy = False;
+      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec2.valid) rdy = False;
+
+      if (!rdy) stop = True;
+
+      if (rdy) begin
+        if (instr.isMemAccess) begin
+          lsu.exec2.deq;
+          useMem = True;
+        end else if (instr.isSystem) begin
+          csrExec3.enq(csrExec2.first);
+          useSys = True;
+          csrExec2.deq;
+        end else begin
+          alu[i].exec2.deq;
+        end
+
+        consumed[i] = True;
+      end
+    end
+
+    wbBuffer.put(consumed, execBuffer);
+    execBuffer.consume(consumed);
+  endrule
+
+  ////////////////////////////////////////////////////////////////////////////
   // Write-back instructions: must be in-order as the pipeline may contains
   // multiple instructions with the same destination register
   ////////////////////////////////////////////////////////////////////////////
@@ -168,9 +258,9 @@ module mkCPU(CpuIfc);
       Bool rdy = True;
       if (instr.isSystem && useSys) rdy = False;
       if (instr.isMemAccess && useMem) rdy = False;
-      if (instr.isSystem && !csrOut.canDeq) rdy = False;
-      if (instr.isMemAccess && !lsu.exec2.valid) rdy = False;
-      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec2.valid) rdy = False;
+      if (instr.isSystem && !csrExec3.canDeq) rdy = False;
+      if (instr.isMemAccess && !lsu.exec3.valid) rdy = False;
+      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec3.valid) rdy = False;
 
       if (!rdy) stop = True;
 
@@ -178,16 +268,16 @@ module mkCPU(CpuIfc);
         Bit#(32) result = ?;
 
         if (instr.isMemAccess) begin
-          result = lsu.exec2.result;
-          lsu.exec2.deq;
+          result = lsu.exec3.result;
+          lsu.exec3.deq;
           useMem = True;
         end else if (instr.isSystem) begin
-          result = csrOut.first;
+          result = csrExec3.first;
           useSys = True;
-          csrOut.deq;
+          csrExec3.deq;
         end else begin
-          result = alu[i].exec2.result;
-          alu[i].exec2.deq;
+          result = alu[i].exec3.result;
+          alu[i].exec3.deq;
         end
 
         if (debug && rd != 0) begin
@@ -273,7 +363,7 @@ module mkCPU(CpuIfc);
       if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec1.valid) rdy = False;
       if (instr.isMemAccess && !lsu.exec1.valid) rdy = False;
       if (instr.isSystem && !system.canDeq) rdy = False;
-      if (instr.isSystem && !csrOut.canEnq) rdy = False;
+      if (instr.isSystem && !csrExec2.canEnq) rdy = False;
       if (instr.isSystem && useSys) rdy = False;
       if (!rdy) stop = True;
 
@@ -312,7 +402,7 @@ module mkCPU(CpuIfc);
           useMem = True;
         end else if (instr.isSystem) begin
           system.deq(!exception);
-          csrOut.enq(system.response.rd);
+          csrExec2.enq(system.response.rd);
           useSys = True;
         end else begin
           alu[i].exec1.commit(!exception);
@@ -351,11 +441,14 @@ module mkCPU(CpuIfc);
     end
 
     forwardProgess <= consumed == replicate(False) ? forwardProgess+1 : 0;
-    wbBuffer.put(commited, commitBuffer.instr);
+    execBuffer.put(commited, commitBuffer.instr);
     commitBuffer.consume(consumed);
     instret <= instrCounter;
     commitPc <= currentPc;
   endrule
+
+  Reg#(Bit#(32)) stalled1 <- mkReg(0);
+  Reg#(Bit#(32)) stalled2 <- mkReg(0);
 
   ////////////////////////////////////////////////////////////////////////////
   // Enter new instruction to the pipeline, also detect read-after-write hazard
@@ -405,7 +498,8 @@ module mkCPU(CpuIfc);
         if (rd != 0 && rd == dispatchBuffer.instr[j].rd) rdy = False;
       end
 
-      if (!rdy1 || !rdy2) rdy = False;
+      if ((!rdy1 || !rdy2) && !useLateIssue) rdy = False;
+      if ((!rdy1 || !rdy2) && !supportLateIssue(instr.opcode) && useLateIssue) rdy = False;
 
       if (!system.canEnter && instr.isSystem) rdy = False;
       if (!lsu.canEnter && instr.isMemAccess) rdy = False;
@@ -428,10 +522,10 @@ module mkCPU(CpuIfc);
           system.enter(aluReq, Machine);
           useSys = True;
         end else if (instr.isMemAccess) begin
-          lsu.enter(aluReq, dispatchBuffer.epoch);
+          lsu.enter(aluReq, rdy1, rdy2);
           useMem = True;
         end else begin
-          alu[i].enter(aluReq, dispatchBuffer.epoch);
+          alu[i].enter(aluReq, rdy1, rdy2);
         end
       end
     end
