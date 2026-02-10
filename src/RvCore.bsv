@@ -39,7 +39,7 @@ typedef struct {
 (* synthesize *)
 module mkCPU(CpuIfc);
   Bool debug = False;
-  Bool logTrace = True;
+  Bool logTrace = False;
   Bool useLateIssue = True;
   Bool useForwarding = True;
 
