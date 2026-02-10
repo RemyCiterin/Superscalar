@@ -19,28 +19,22 @@ import TLTypes :: *;
 import TLBram :: *;
 
 interface ExecStage1;
+  (* always_ready *) method Maybe#(Bit#(32)) forward;
   (* always_ready *) method Action wakeupRs1(Bit#(32) value);
   (* always_ready *) method Action wakeupRs2(Bit#(32) value);
 
-  // Forwarding signal doesn't depends of the valid signal
+  (* always_ready *) method Bool valid;
+  method Action deq;
+endinterface
+
+interface ExecStage2;
   (* always_ready *) method Maybe#(Bit#(32)) forward;
 
   (* always_ready *) method CauseException cause;
   (* always_ready *) method Bit#(32) nextPc;
   (* always_ready *) method Bool exception;
   (* always_ready *) method Bool valid;
-  method Action commit(Bool keep);
-endinterface
-
-interface ExecStage2;
-  (* always_ready *) method Action wakeupRs1(Bit#(32) value);
-  (* always_ready *) method Action wakeupRs2(Bit#(32) value);
-
-  // Forwarding signal doesn't depends of the valid signal
-  (* always_ready *) method Maybe#(Bit#(32)) forward;
-
-  (* always_ready *) method Bool valid;
-  method Action deq;
+  method Action deq(Bool keep);
 endinterface
 
 interface ExecStage3;
@@ -67,18 +61,18 @@ module mkExecAlu(ExecIfc#(1));
 
   Reg#(Maybe#(Bit#(32))) rs1_exec1[2] <- mkCReg(2, Invalid);
   Reg#(Maybe#(Bit#(32))) rs2_exec1[2] <- mkCReg(2, Invalid);
-  Reg#(Maybe#(Bit#(32))) rs1_exec2[2] <- mkCReg(2, Invalid);
-  Reg#(Maybe#(Bit#(32))) rs2_exec2[2] <- mkCReg(2, Invalid);
 
   Reg#(Bool) valid2[2] <- mkCReg(2, False);
+  Reg#(AluResponse) response2_early <- mkRegU;
   Reg#(AluRequest) request2 <- mkRegU;
-  Reg#(Bit#(32)) value2 <- mkRegU;
   Reg#(Bool) late2 <- mkRegU;
+
+  AluResponse response2_late = execAlu(request2, True);
+  AluResponse response2 = late2 ? response2_late : response2_early;
 
   Reg#(Bool) valid3[2] <- mkCReg(2, False);
   Reg#(AluRequest) request3 <- mkRegU;
   Reg#(Bit#(32)) value3 <- mkRegU;
-  Reg#(Bool) late3 <- mkRegU;
 
   method canEnter = alu1.canEnter;
   method Action enter(AluRequest req, Bool rdy1, Bool rdy2);
@@ -99,51 +93,42 @@ module mkExecAlu(ExecIfc#(1));
     endmethod
 
     method forward = alu1.canDeq && !late1 ? alu1.response.forward : Invalid;
-    method valid = alu1.canDeq && !valid2[1];
-    method exception = alu1.response.exception;
-    method nextPc = alu1.response.pc;
-    method cause = alu1.response.cause;
 
-    method Action commit(Bool keep) if (alu1.canDeq && !valid2[1]);
-      if (keep) valid2[1] <= True;
-      rs1_exec2[1] <= rs1_exec1[1];
-      rs2_exec2[1] <= rs2_exec1[1];
-      value2 <= alu1.response.rd;
-      request2 <= request1;
+    method valid = alu1.canDeq && !valid2[1] && isValid(rs1_exec1[1]) && isValid(rs2_exec1[1]);
+
+    method Action deq
+      if (alu1.canDeq && !valid2[1] && isValid(rs1_exec1[1]) && isValid(rs2_exec1[1]));
+      AluRequest req = request1;
+      req.rs1 = validValue(rs1_exec1[1]);
+      req.rs2 = validValue(rs2_exec1[1]);
+      request2 <= req;
+
+      response2_early <= alu1.response;
+      valid2[1] <= True;
       late2 <= late1;
       alu1.deq;
     endmethod
   endinterface
 
   interface ExecStage2 exec2;
-    method Action wakeupRs1(Bit#(32) value);
-      if (!isValid(rs1_exec2[0])) rs1_exec2[0] <= Valid(value);
-    endmethod
+    method valid = valid2[0] && !valid3[1];
+    method forward = valid2[0] ? Valid(response2.rd) : Invalid;
+    method exception = response2.exception;
+    method cause = response2.cause;
+    method nextPc = response2.pc;
 
-    method Action wakeupRs2(Bit#(32) value);
-      if (!isValid(rs2_exec2[0])) rs2_exec2[0] <= Valid(value);
-    endmethod
+    method Action deq(Bool commit) if (valid2[0] && !valid3[1]);
+      request3 <= request2;
 
-    method valid = valid2[0] && !valid3[1] && isValid(rs1_exec2[1]) && isValid(rs2_exec2[1]);
-    method forward = valid2[0] && !late2 ? Valid(value2) : Invalid;
-
-    method Action deq
-      if (valid2[0] && !valid3[1] && isValid(rs1_exec2[1]) && isValid(rs2_exec2[1]));
-      AluRequest req = request2;
-      req.rs1 = validValue(rs1_exec2[1]);
-      req.rs2 = validValue(rs2_exec2[1]);
-      request3 <= req;
-
+      if (commit) valid3[1] <= True;
+      value3 <= response2.rd;
       valid2[0] <= False;
-      valid3[1] <= True;
-      value3 <= value2;
-      late3 <= late2;
     endmethod
   endinterface
 
   interface ExecStage3 exec3;
     method valid = valid3[0];
-    method result = late3 ? execAlu(request3, False).rd : value3;
+    method result = value3;
 
     method Action deq if (valid3[0]);
       valid3[0] <= False;
@@ -175,21 +160,22 @@ module mkLsu(LsuIfc);
 
   DCache#(8, 8) cache <- mkDCache(0);
 
-  Fifo#(1, Tuple2#(LsuRequest, RvInstr)) buffer <- mkBypassFifo;
+  Fifo#(1, LsuRequest) buffer <- mkBypassFifo;
+  Reg#(CauseException) cause2 <- mkRegU;
   Reg#(LsuRequest) request2 <- mkRegU;
+  Reg#(Bool) exception2 <- mkRegU;
+  Reg#(Bit#(32)) pc2 <- mkRegU;
 
   rule enq_stage2;
-    match {.req, .instr} = buffer.first;
-
     cache.lookup(DCacheReq{
-      opcode: req.store ? St : Ld,
-      mask: lsuRequestMask(req),
-      data: lsuRequestData(req),
-      address: req.address,
+      opcode: buffer.first.store ? St : Ld,
+      mask: lsuRequestMask(buffer.first),
+      data: lsuRequestData(buffer.first),
+      address: buffer.first.address,
       amo: ?
     });
 
-    request2 <= req;
+    request2 <= buffer.first;
     buffer.deq;
   endrule
 
@@ -205,35 +191,34 @@ module mkLsu(LsuIfc);
       method wakeupRs1(_) = noAction;
       method wakeupRs2(_) = noAction;
       method forward = Invalid;
-      method nextPc = pc1 + 4;
-      method cause =
-        request1.instr.opcode == Load ? LoadAddressMisaligned : StoreAmoAddressMisaligned;
-      method exception = !lsuRequestAligned(getLsuRequest(request1));
       method valid = valid1[0] && buffer.canEnq;
 
-      method Action commit(Bool keep) if (valid1[0] && buffer.canEnq);
-        if (keep) begin
-          buffer.enq(tuple2(getLsuRequest(request1), request1.instr));
-        end
+      method Action deq if (valid1[0] && buffer.canEnq);
+        cause2 <= request1.instr.opcode == Load ? LoadAddressMisaligned : StoreAmoAddressMisaligned;
+        exception2 <= !lsuRequestAligned(getLsuRequest(request1));
+        buffer.enq(getLsuRequest(request1));
         valid1[0] <= False;
+        pc2 <= pc1;
       endmethod
     endinterface
 
     interface ExecStage2 exec2;
-      method wakeupRs1(_) = noAction;
-      method wakeupRs2(_) = noAction;
       method forward = cache.valid ? Valid(lsuRequestRd(request2, cache.response)) : Invalid;
       method valid = cache.valid && !valid3[1];
 
-      method Action deq if (cache.valid && !valid3[1]);
+      method cause = cause2;
+      method nextPc = pc2 + 4;
+      method exception = exception2;
+
+      method Action deq(Bool commit) if (cache.valid && !valid3[1]);
         value3 <= lsuRequestRd(request2, cache.response);
         let address = (request2.address - 'h80000000) >> 2;
         let mask = lsuRequestMask(request2);
         let data = lsuRequestData(request2);
-        valid3[1] <= True;
+        if (commit) valid3[1] <= True;
 
-        cache.deq(True);
-        if (request2.store && request2.address == 'h10000000 && mask[0] == 1) begin
+        cache.deq(commit);
+        if (commit && request2.store && request2.address == 'h10000000 && mask[0] == 1) begin
           $write("%c", data[7:0]);
           //txUart.put(data[7:0]);
           $fflush(stdout);
