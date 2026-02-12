@@ -55,11 +55,11 @@ dot:
 	$(foreach f, $(DOT_FILES), sed -i '/Sched /d' $(f);)
 
 kernel:
-	elf_to_hex/elf_to_hex_32 soft/zig-out/bin/kernel.elf Mem.hex > /dev/null
-	elf_to_hex/elf_to_hex_32 soft/zig-out/bin/kernel.elf Mem32.hex > /dev/null
-	elf_to_hex/elf_to_hex_64 soft/zig-out/bin/kernel.elf Mem64.hex > /dev/null
-	elf_to_hex/elf_to_hex_128 soft/zig-out/bin/kernel.elf Mem128.hex > /dev/null
-	elf_to_hex/elf_to_hex_256 soft/zig-out/bin/kernel.elf Mem256.hex > /dev/null
+	elf_to_hex/elf_to_hex_32 soft/zig-out/bin/kernel.elf Mem.mem > /dev/null
+	elf_to_hex/elf_to_hex_32 soft/zig-out/bin/kernel.elf Mem32.mem > /dev/null
+	elf_to_hex/elf_to_hex_64 soft/zig-out/bin/kernel.elf Mem64.mem > /dev/null
+	elf_to_hex/elf_to_hex_128 soft/zig-out/bin/kernel.elf Mem128.mem > /dev/null
+	elf_to_hex/elf_to_hex_256 soft/zig-out/bin/kernel.elf Mem256.mem > /dev/null
 	riscv32-none-elf-objdump -D soft/zig-out/bin/kernel.elf > soft/firmware.asm
 
 .PHONY: coremark
@@ -67,11 +67,11 @@ coremark:
 	make -C coremark compile PORT_DIR=barebones ITERATIONS=10
 	riscv32-none-elf-objdump -D coremark/coremark.bare.riscv > \
 		coremark/firmware.asm
-	elf_to_hex/elf_to_hex_32 coremark/coremark.bare.riscv Mem.hex
-	elf_to_hex/elf_to_hex_32 coremark/coremark.bare.riscv Mem32.hex
-	elf_to_hex/elf_to_hex_64 coremark/coremark.bare.riscv Mem64.hex
-	elf_to_hex/elf_to_hex_128 coremark/coremark.bare.riscv Mem128.hex
-	elf_to_hex/elf_to_hex_256 coremark/coremark.bare.riscv Mem256.hex
+	elf_to_hex/elf_to_hex_32 coremark/coremark.bare.riscv Mem.mem
+	elf_to_hex/elf_to_hex_32 coremark/coremark.bare.riscv Mem32.mem
+	elf_to_hex/elf_to_hex_64 coremark/coremark.bare.riscv Mem64.mem
+	elf_to_hex/elf_to_hex_128 coremark/coremark.bare.riscv Mem128.mem
+	elf_to_hex/elf_to_hex_256 coremark/coremark.bare.riscv Mem256.mem
 
 .PHONY: compile
 compile:

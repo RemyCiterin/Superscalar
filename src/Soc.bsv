@@ -29,19 +29,19 @@ module mkSoc(MainIfc);
   Integer memSize = 'hFFFFF;
 
   //BRAM_PORT_BE#(Bit#(32), Bit#(256), 32) dmem <-
-  //  mkBRAMCore1BELoad(memSize, False, "Mem256.hex", False);
+  //  mkBRAMCore1BELoad(memSize, False, "Mem256.mem", False);
   //TLSlave#(32, 256, 8, 8, 0) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
   //let llc <- mkLLC;
   //mkIncreaseWidth(False, cpu.dmaster, llc.slave);
   //mkConnection(llc.master, dslave);
 
   BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
-    mkBRAMCore1BELoad(memSize, False, "Mem32.hex", False);
+    mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
   TLSlave#(32, 32, 8, 8, 0) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
   mkConnection(cpu.dmaster, dslave);
 
   BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) imem <-
-    mkBRAMCore1BELoad(memSize, False, "Mem32.hex", False);
+    mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
   TLSlave#(32, 32, 8, 8, 0) islave <- mkTLBram('h80000000, fromInteger(memSize), imem);
   mkConnection(cpu.imaster, islave);
 

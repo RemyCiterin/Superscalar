@@ -54,7 +54,7 @@ interface ExecIfc#(numeric type numFwd);
 endinterface
 
 (* synthesize *)
-module mkExecAlu(ExecIfc#(1));
+module mkExecAlu#(Bool lateAlu) (ExecIfc#(1));
   let alu1 <- mkAlu(True, True, True);
   Reg#(AluRequest) request1 <- mkRegU;
   Reg#(Bool) late1 <- mkRegU;
@@ -68,7 +68,7 @@ module mkExecAlu(ExecIfc#(1));
   Reg#(Bool) late2 <- mkRegU;
 
   AluResponse response2_late = execAlu(request2, True);
-  AluResponse response2 = late2 ? response2_late : response2_early;
+  AluResponse response2 = late2 && lateAlu ? response2_late : response2_early;
 
   Reg#(Bool) valid3[2] <- mkCReg(2, False);
   Reg#(AluRequest) request3 <- mkRegU;
@@ -85,14 +85,14 @@ module mkExecAlu(ExecIfc#(1));
 
   interface ExecStage1 exec1;
     method Action wakeupRs1(Bit#(32) value);
-      if (!isValid(rs1_exec1[0])) rs1_exec1[0] <= Valid(value);
+      if (!isValid(rs1_exec1[0]) && lateAlu) rs1_exec1[0] <= Valid(value);
     endmethod
 
     method Action wakeupRs2(Bit#(32) value);
-      if (!isValid(rs2_exec1[0])) rs2_exec1[0] <= Valid(value);
+      if (!isValid(rs2_exec1[0]) && lateAlu) rs2_exec1[0] <= Valid(value);
     endmethod
 
-    method forward = alu1.canDeq && !late1 ? alu1.response.forward : Invalid;
+    method forward = alu1.canDeq && !(late1 && lateAlu) ? alu1.response.forward : Invalid;
 
     method valid = alu1.canDeq && !valid2[1] && isValid(rs1_exec1[1]) && isValid(rs2_exec1[1]);
 

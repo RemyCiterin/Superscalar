@@ -99,7 +99,7 @@ module mkCPU(CpuIfc);
   ////////////////////////////////////////////////////////////////////////////
   // Define execution units
   ////////////////////////////////////////////////////////////////////////////
-  Vector#(SupSize, ExecIfc#(1)) alu <- replicateM(mkExecAlu);
+  Vector#(SupSize, ExecIfc#(1)) alu <- replicateM(mkExecAlu(useLateIssue));
 
   let lsu_ifc <- mkLsu;
   let uart = lsu_ifc.transmit;
