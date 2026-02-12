@@ -376,7 +376,7 @@ module mkCPU(CpuIfc);
 
   Reg#(Bit#(32)) forwardProgess <- mkReg(0);
 
-  rule dead_lock if (forwardProgess >= 100000);
+  rule dead_lock if (forwardProgess >= 1000000);
     $display("dead lock at %h", commitPc);
     $finish();
   endrule

@@ -118,10 +118,9 @@ module mkExecAlu(ExecIfc#(1));
     method nextPc = response2.pc;
 
     method Action deq(Bool commit) if (valid2[0] && !valid3[1]);
-      request3 <= request2;
-
       if (commit) valid3[1] <= True;
       value3 <= response2.rd;
+      request3 <= request2;
       valid2[0] <= False;
     endmethod
   endinterface
