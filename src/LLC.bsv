@@ -3,6 +3,7 @@ import BRAMCore :: *;
 import RegFile :: *;
 import TLTypes :: *;
 import TLUtils :: *;
+import Assert :: *;
 import Vector :: *;
 import Fifo :: *;
 
@@ -13,6 +14,9 @@ typedef Bit#(LineW) Line;
 
 typedef 256 Sets;
 typedef 8 Ways;
+
+typedef 4 TQ_SIZE; // Number of MSHR
+typedef Bit#(TLog#(TQ_SIZE)) Transaction;
 
 typedef TLog#(Sets) IndexW;
 typedef TSub#(32, TAdd#(IndexW, OffsetW)) TagW;
@@ -38,7 +42,6 @@ interface LLC;
   interface TLMaster#(`TL_LLC) master;
 endinterface
 
-// TODO: memory responses
 (* synthesize *)
 module mkLLC(LLC);
   // Slave interface
@@ -46,69 +49,40 @@ module mkLLC(LLC);
   Fifo#(2, ChannelD#(`TL_LLC)) sourceD <- mkFifo;
 
   // Master interface
-  Fifo#(2, ChannelA#(`TL_LLC)) evictBuffer <- mkPipelineFifo;
-  Fifo#(2, ChannelA#(`TL_LLC)) sourceA <- mkFifo;
+  Fifo#(2, ChannelA#(`TL_LLC)) evictBuffer <- mkFifo;
+  Fifo#(2, ChannelA#(`TL_LLC)) refillBuffer <- mkFifo;
   Fifo#(2, ChannelD#(`TL_LLC)) sinkD <- mkFifo;
 
-  RegFile#(Bit#(SourceW), Bit#(32)) source2address <-
-    mkRegFileWCF(0,fromInteger(2**valueof(SourceW)-1));
+  RegFile#(Transaction, ChannelA#(`TL_LLC)) requests <- mkRegFileFull;
 
-  rule connectSourceA;
-    sourceA.enq(evictBuffer.first);
-    evictBuffer.deq;
-  endrule
-
-  Fifo#(2, ChannelA#(`TL_LLC)) toRetryQ1 <- mkFifo;
-  Fifo#(2, ChannelA#(`TL_LLC)) toRetryQ2 <- mkFifo;
-  Fifo#(8, ChannelA#(`TL_LLC)) retryQ <- mkPipelineFifo;
   TransactionQueue transactions <- mkTransactionQueue;
-
-  rule connectRetryQ1;
-    retryQ.enq(toRetryQ1.first);
-    toRetryQ1.deq;
-  endrule
-
-  (* preempts = "connectRetryQ1, connectRetryQ2" *)
-  rule connectRetryQ2;
-    retryQ.enq(toRetryQ2.first);
-    toRetryQ2.deq;
-  endrule
 
   LLCPipe pipeline <- mkLLCPipe;
 
-  rule lookup_cpu;
-    if (sinkA.canDeq) begin
-      Physical phys = unpack(sinkA.first.address);
-      source2address.upd(sinkA.first.source, sinkA.first.address);
-
-      Bool blocked <- transactions.search(phys.index);
-      if (!blocked) begin
-        //$display("start cpu request", fshow(sinkA.first));
-        transactions.enter(phys.index, sinkA.first.source);
-        pipeline.enter(sinkA.first.address, ChannelA(sinkA.first));
-        sinkA.deq;
-      end else begin
-        toRetryQ1.enq(sinkA.first);
-        sinkA.deq;
-      end
-
+  rule lookup_cpu if (!sinkD.canDeq);
+    let tr_opt = transactions.scheduler;
+    if (tr_opt matches tagged Valid .tr) begin
+      let request = requests.sub(tr);
+      pipeline.enter(request.address, tr, ChannelA(request));
+      transactions.retry(tr);
     end else begin
-      Physical phys = unpack(retryQ.first.address);
+      Physical phys = unpack(sinkA.first.address);
 
       Bool blocked <- transactions.search(phys.index);
       if (!blocked) begin
-        //$display("start cpu request", fshow(retryQ.first));
-        transactions.enter(phys.index, retryQ.first.source);
-        pipeline.enter(retryQ.first.address, ChannelA(retryQ.first));
-        retryQ.deq;
+        let tr <- transactions.enter(phys.index);
+        //$display("start cpu request", fshow(sinkA.first), " t%h", tr);
+        pipeline.enter(sinkA.first.address, tr, ChannelA(sinkA.first));
+        requests.upd(tr, sinkA.first);
+        sinkA.deq;
       end
     end
   endrule
 
-  (* preempts = "lookup_mem, lookup_cpu" *)
   rule lookup_mem;
     //$display("receive mem response: ", fshow(sinkD.first));
-    pipeline.enter(source2address.sub(sinkD.first.source), ChannelD(sinkD.first));
+    Transaction tr = truncate(sinkD.first.source >> 1);
+    pipeline.enter(requests.sub(tr).address, tr, ChannelD(sinkD.first));
     sinkD.deq;
   endrule
 
@@ -116,28 +90,24 @@ module mkLLC(LLC);
     Physical phys = unpack(pipeline.address);
 
     if (request.opcode == AccessAckData) begin
-      // Write the data and evict if necessary
-      transactions.refillDone(request.source);
-
-      // Add the new line set the new tag
+      transactions.refillDone(pipeline.transaction);
       pipeline.deq(True, -1, Valid(phys.tag), request.data);
 
-      if (pipeline.tag matches tagged Valid .tag)  begin
-        // Evict old line
-        sourceA.enq(ChannelA{
+      // Evict the old cache line
+      if (pipeline.tag matches tagged Valid .tag) begin
+        evictBuffer.enq(ChannelA{
           opcode: PutData,
           address: pack(Physical{tag: tag, index: phys.index, offset: 0}),
           size: fromInteger(valueof(TLog#(TDiv#(LineW,8)))),
-          source: request.source,
+          source: 2*zeroExtend(pipeline.transaction),
           data: pipeline.line,
           mask: -1
         });
       end else begin
-        // No need to evict any data
-        transactions.evictDone(request.source);
+        transactions.evictDone(pipeline.transaction);
       end
     end else if (request.opcode == AccessAck) begin
-      transactions.evictDone(request.source);
+      transactions.evictDone(pipeline.transaction);
       pipeline.deq(False, 0, ?, ?);
     end else begin
       $display("LLC: invalid memory response");
@@ -145,8 +115,6 @@ module mkLLC(LLC);
     end
   endrule
 
-  (* preempts = "connectSourceA,pipeline_deq_a" *)
-  (* preempts = "connectSourceA,pipeline_deq_d" *)
   rule pipeline_deq_a if (pipeline.valid &&& pipeline.request matches tagged ChannelA .request);
     Physical phys = unpack(request.address);
 
@@ -154,12 +122,14 @@ module mkLLC(LLC);
       // Cache hit
 
       // Finish the transaction
-      transactions.evictDone(request.source);
-      transactions.refillDone(request.source);
+      transactions.deq(pipeline.transaction);
+      transactions.evictDone(pipeline.transaction);
+      transactions.refillDone(pipeline.transaction);
 
       // Process request and send response
       case (request.opcode) matches
         GetFull : begin
+          //$display("respond: 0x%h\n", pipeline.line);
           pipeline.deq(False, 0, ?, ?);
           sourceD.enq(ChannelD{
             opcode: AccessAckData,
@@ -186,14 +156,14 @@ module mkLLC(LLC);
       endcase
     end else begin
       // Cache miss
-      toRetryQ2.enq(request);
       pipeline.deq(False, 0, ?, ?);
 
-      sourceA.enq(ChannelA{
+      // Acquire the new cache line
+      refillBuffer.enq(ChannelA{
         opcode: GetFull,
         address: pack(Physical{tag: phys.tag, index: phys.index, offset: 0}),
         size: fromInteger(valueof(TLog#(TDiv#(LineW,8)))),
-        source: request.source,
+        source: 2*zeroExtend(pipeline.transaction)+1,
         mask: -1,
         data: ?
       });
@@ -201,7 +171,14 @@ module mkLLC(LLC);
   endrule
 
   interface TLMaster master;
-    interface channelA = toFifoO(sourceA);
+    interface FifoO channelA;
+      method canDeq = refillBuffer.canDeq || evictBuffer.canDeq;
+      method first = refillBuffer.canDeq ? refillBuffer.first : evictBuffer.first;
+      method Action deq;
+        if (refillBuffer.canDeq) refillBuffer.deq;
+        else evictBuffer.deq;
+      endmethod
+    endinterface
     interface channelB = nullFifoI;
     interface channelC = nullFifoO;
     interface channelD = toFifoI(sinkD);
@@ -224,9 +201,10 @@ typedef union tagged {
 
 interface LLCPipe;
   // Two cycles of latency
-  method Action enter(Bit#(32) address, LLCPipeReq request);
+  method Action enter(Bit#(32) address, Transaction tr, LLCPipeReq request);
 
   method Action deq(Bool wrTag, Mask mask, Maybe#(Tag) newTag, Line newLine);
+  (* always_ready *) method Transaction transaction;
   (* always_ready *) method LLCPipeReq request;
   (* always_ready *) method Bit#(32) address;
   (* always_ready *) method Maybe#(Tag) tag;
@@ -271,6 +249,7 @@ module mkLLCPipe(LLCPipe);
   // Stage 1 states
   ///////////////////////////////////////////////////////////////////////////////////////
   Reg#(Bool) stage1_valid[2] <- mkCReg(2, False);
+  Reg#(Transaction) stage1_transaction <- mkRegU;
   Reg#(LLCPipeReq) stage1_request <- mkRegU;
   Reg#(Bit#(32)) stage1_address <- mkRegU;
 
@@ -278,6 +257,7 @@ module mkLLCPipe(LLCPipe);
   // Stage 2 states
   ///////////////////////////////////////////////////////////////////////////////////////
   Reg#(Bool) stage2_valid[2] <- mkCReg(2, False);
+  Reg#(Transaction) stage2_transaction <- mkRegU;
   Reg#(LLCPipeReq) stage2_request <- mkRegU;
   Reg#(Bit#(32)) stage2_address <- mkRegU;
   Reg#(Maybe#(Tag)) stage2_tag <- mkRegU;
@@ -300,6 +280,7 @@ module mkLLCPipe(LLCPipe);
     end
 
     dataRams.a.put(0, {way, phys.index}, ?);
+    stage2_transaction <= stage1_transaction;
     stage2_request <= stage1_request;
     stage2_address <= stage1_address;
     stage2_tag <= tag;
@@ -309,6 +290,7 @@ module mkLLCPipe(LLCPipe);
   ///////////////////////////////////////////////////////////////////////////////////////
   // Stage 2
   ///////////////////////////////////////////////////////////////////////////////////////
+  method transaction = stage2_transaction;
   method valid = stage2_valid[0] && init;
   method request = stage2_request;
   method address = stage2_address;
@@ -328,9 +310,10 @@ module mkLLCPipe(LLCPipe);
   ///////////////////////////////////////////////////////////////////////////////////////
   // Stage 0
   ///////////////////////////////////////////////////////////////////////////////////////
-  method Action enter(Bit#(32) addr, LLCPipeReq req) if (!stage1_valid[1] && init);
+  method Action enter(Bit#(32) addr, Transaction tr, LLCPipeReq req) if (!stage1_valid[1] && init);
     Physical phys = unpack(addr);
     randomWay <= randomWay + 1;
+    stage1_transaction <= tr;
     stage1_valid[1] <= True;
     stage1_address <= addr;
     stage1_request <= req;
@@ -342,6 +325,7 @@ module mkLLCPipe(LLCPipe);
   endmethod
 endmodule
 
+// The transaction queue is in charge of scheduling the requests/checking for hazards
 interface TransactionQueue;
   // Return if their is an inflight transaction using a given index, if true then the current
   // request must be delayed. I use an actionvalue here because otherwise bluespec try to
@@ -349,25 +333,32 @@ interface TransactionQueue;
   (* always_ready *) method ActionValue#(Bool) search(Index index);
 
   (* always_ready *) method Bool canEnter;
-  method Action enter(Index index, Bit#(SourceW) source);
+  method ActionValue#(Transaction) enter(Index index);
+
+  // Search for a transaction to retry
+  (* always_ready *) method Maybe#(Transaction) scheduler;
+
+  // Retry a transaction
+  (* always_ready *) method Action retry(Transaction tr);
 
   // Inform the transaction queue that an evict transaction finished
-  (* always_ready *) method Action evictDone(Bit#(SourceW) source);
+  (* always_ready *) method Action evictDone(Transaction tr);
 
   // Inform the transaction queue that a refill transaction finished
-  (* always_ready *) method Action refillDone(Bit#(SourceW) source);
-endinterface
+  (* always_ready *) method Action refillDone(Transaction tr);
 
-typedef 16 TQ_SIZE;
+  // Mark a transaction as finished
+  (* always_ready *) method Action deq(Transaction tr);
+endinterface
 
 (* synthesize *)
 module mkTransactionQueue(TransactionQueue);
-  Vector#(TQ_SIZE, Reg#(Bit#(SourceW))) sources <- replicateM(mkRegU);
   Vector#(TQ_SIZE, Reg#(Index)) indices <- replicateM(mkRegU);
   Reg#(Vector#(TQ_SIZE, Bool)) refill[2] <- mkCReg(2, replicate(False));
   Reg#(Vector#(TQ_SIZE, Bool)) evict[2] <- mkCReg(2, replicate(False));
-  Reg#(Bit#(TLog#(TQ_SIZE))) head <- mkReg(0);
-  Reg#(Bit#(TLog#(TQ_SIZE))) tail <- mkReg(0);
+  Reg#(Vector#(TQ_SIZE, Bool)) valid[2] <- mkCReg(2, replicate(False));
+  Reg#(Transaction) head <- mkReg(0);
+  Reg#(Transaction) tail <- mkReg(0);
 
   ///////////////////////////////////////////////////////////////////////////////////////
   // Search for hazards
@@ -375,7 +366,7 @@ module mkTransactionQueue(TransactionQueue);
   method ActionValue#(Bool) search(Index index);
     Bool found = False;
 
-    for (Integer i=0; i < valueof(TQ_SIZE); i = i + 1) if (evict[1][i] || refill[1][i]) begin
+    for (Integer i=0; i < valueof(TQ_SIZE); i = i + 1) if (valid[1][i]) begin
       found = found || indices[i] == index;
     end
 
@@ -383,39 +374,56 @@ module mkTransactionQueue(TransactionQueue);
   endmethod
 
   ///////////////////////////////////////////////////////////////////////////////////////
+  // Search a transaction to retry
+  ///////////////////////////////////////////////////////////////////////////////////////
+  method Maybe#(Transaction) scheduler;
+    Maybe#(Transaction) ret = Invalid;
+
+    for (Integer i=0; i < valueof(TQ_SIZE); i = i + 1) begin
+      if (valid[1][i] && !evict[1][i] && !refill[1][i])
+        ret = Valid(fromInteger(i));
+    end
+
+    return ret;
+  endmethod
+
+  method Action retry(Transaction tr);
+    dynamicAssert(valid[1][tr] && !evict[1][tr] && !refill[1][tr], "retry a blocked transaction");
+    refill[1][tr] <= True;
+    evict[1][tr] <= True;
+  endmethod
+
+  ///////////////////////////////////////////////////////////////////////////////////////
   // Stage 0: add a new transaction, initialy support that we muts evict and refill a line
   ///////////////////////////////////////////////////////////////////////////////////////
-  method Bool canEnter = !evict[1][head] && !refill[1][head];
-  method Action enter(Index index, Bit#(SourceW) source) if (!evict[1][head] && !refill[1][head]);
+  method Bool canEnter = !valid[1][head];
+  method ActionValue#(Transaction) enter(Index index) if(!valid[1][head]);
     refill[1][head] <= True;
-    sources[head] <= source;
-    indices[head] <= index;
     evict[1][head] <= True;
+    valid[1][head] <= True;
+    indices[head] <= index;
+    head <= head+1;
+    return head;
   endmethod
 
   ///////////////////////////////////////////////////////////////////////////////////////
   // Mark an evict transaction as done or useless (hit)
   ///////////////////////////////////////////////////////////////////////////////////////
-  method Action evictDone(Bit#(SourceW) source);
-    Vector#(TQ_SIZE, Bool) v = evict[0];
-
-    for (Integer i=0; i < valueof(TQ_SIZE); i = i + 1) if (sources[i] == source) begin
-      v[i] = False;
-    end
-
-    evict[0] <= v;
+  method Action evictDone(Transaction tr);
+    evict[0][tr] <= False;
   endmethod
 
   ///////////////////////////////////////////////////////////////////////////////////////
   // Mark a refill transaction as done or useless (hit)
   ///////////////////////////////////////////////////////////////////////////////////////
-  method Action refillDone(Bit#(SourceW) source);
-    Vector#(TQ_SIZE, Bool) v = refill[0];
+  method Action refillDone(Transaction tr);
+    refill[0][tr] <= False;
+  endmethod
 
-    for (Integer i=0; i < valueof(TQ_SIZE); i = i + 1) if (sources[i] == source) begin
-      v[i] = False;
-    end
-
-    refill[0] <= v;
+  ///////////////////////////////////////////////////////////////////////////////////////
+  // Mark a transaction as finished
+  ///////////////////////////////////////////////////////////////////////////////////////
+  method Action deq(Transaction tr);
+    valid[0][tr] <= False;
   endmethod
 endmodule
