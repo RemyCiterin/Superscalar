@@ -7,19 +7,25 @@ import Assert :: *;
 import Vector :: *;
 import Fifo :: *;
 
-typedef 256 LineW;
+import CachePipe :: *;
+
+// Define the parameter of the cache
+typedef 256 LineW; // Width (in bits) of one cache line
+typedef 256 Sets;  // Number of "set"
+typedef 8 Ways;    // Number of element per "set"
+typedef 4 TQ_SIZE; // Maximum number of concurent requests
+typedef 32 AddrW;  // Width (in bits) of the tilelink "address" field
+typedef 8 SourceW; // Width (in bits) of the tilelink "source" field
+typedef 8 SizeW;   // Width (in bits) of the tilelink "size" field
+
 typedef TDiv#(LineW,8) MaskW;
 typedef TLog#(TDiv#(LineW,8)) OffsetW;
 typedef Bit#(LineW) Line;
 
-typedef 256 Sets;
-typedef 8 Ways;
-
-typedef 4 TQ_SIZE; // Number of MSHR
 typedef Bit#(TLog#(TQ_SIZE)) Transaction;
 
 typedef TLog#(Sets) IndexW;
-typedef TSub#(32, TAdd#(IndexW, OffsetW)) TagW;
+typedef TSub#(AddrW, TAdd#(IndexW, OffsetW)) TagW;
 
 typedef Bit#(TagW) Tag;
 typedef Bit#(MaskW) Mask;
@@ -33,9 +39,7 @@ typedef struct {
   Offset offset;
 } Physical deriving(Bits);
 
-typedef 8 SourceW;
-typedef 8 SizeW;
-`define TL_LLC 32, LineW, SizeW, SourceW, 0
+`define TL_LLC AddrW, LineW, SizeW, SourceW, 0
 
 interface LLC;
   interface TLSlave#(`TL_LLC) slave;
@@ -44,54 +48,103 @@ endinterface
 
 (* synthesize *)
 module mkLLC(LLC);
-  // Slave interface
+  ///////////////////////////////////////////////////////////////////////////////////////
+  // Slave bus interface (from compute units)
+  ///////////////////////////////////////////////////////////////////////////////////////
   Fifo#(2, ChannelA#(`TL_LLC)) sinkA <- mkFifo;
   Fifo#(2, ChannelD#(`TL_LLC)) sourceD <- mkFifo;
 
-  // Master interface
+  ///////////////////////////////////////////////////////////////////////////////////////
+  // Master bus interface (to memory)
+  ///////////////////////////////////////////////////////////////////////////////////////
   Fifo#(2, ChannelA#(`TL_LLC)) evictBuffer <- mkFifo;
   Fifo#(2, ChannelA#(`TL_LLC)) refillBuffer <- mkFifo;
   Fifo#(2, ChannelD#(`TL_LLC)) sinkD <- mkFifo;
 
+  ///////////////////////////////////////////////////////////////////////////////////////
+  // MSHR file: scheduler and associated requests
+  ///////////////////////////////////////////////////////////////////////////////////////
   RegFile#(Transaction, ChannelA#(`TL_LLC)) requests <- mkRegFileFull;
-
   TransactionQueue transactions <- mkTransactionQueue;
 
-  LLCPipe pipeline <- mkLLCPipe;
+  ///////////////////////////////////////////////////////////////////////////////////////
+  // Cache pipeline (contains the states of each line)
+  ///////////////////////////////////////////////////////////////////////////////////////
+  CachePipe#(TagW, Ways, IndexW, Line, LLCRequest) pipeline <- mkCachePipe;
 
+  ///////////////////////////////////////////////////////////////////////////////////////
+  // Retry an old request or allocate a new one, have a lower priority than the memory port
+  ///////////////////////////////////////////////////////////////////////////////////////
   rule lookup_cpu if (!sinkD.canDeq);
     let tr_opt = transactions.scheduler;
     if (tr_opt matches tagged Valid .tr) begin
+      // We can retry al older request
       let request = requests.sub(tr);
-      pipeline.enter(request.address, tr, ChannelA(request));
+      //pipeline.enter(request.address, tr, ChannelA(request));
       transactions.retry(tr);
+
+      Physical phys = unpack(request.address);
+      pipeline.enter(
+        phys.tag, phys.index, Invalid,
+        LLCRequest{transaction: tr, request: ChannelA(request), address: pack(phys)}
+      );
     end else begin
+      // Try a new incomming request, block if their is a data hazard
+      // (the "set" of the new requets is already used by an order request)
       Physical phys = unpack(sinkA.first.address);
 
       Bool blocked <- transactions.search(phys.index);
       if (!blocked) begin
         let tr <- transactions.enter(phys.index);
         //$display("start cpu request", fshow(sinkA.first), " t%h", tr);
-        pipeline.enter(sinkA.first.address, tr, ChannelA(sinkA.first));
+        //pipeline.enter(sinkA.first.address, tr, ChannelA(sinkA.first));
+        pipeline.enter(
+          phys.tag,
+          phys.index,
+          Invalid,
+          LLCRequest{
+            transaction: tr,
+            address: pack(phys),
+            request: ChannelA(sinkA.first)
+          }
+        );
         requests.upd(tr, sinkA.first);
         sinkA.deq;
       end
     end
   endrule
 
+  ///////////////////////////////////////////////////////////////////////////////////////
+  // Accept a response from memory
+  ///////////////////////////////////////////////////////////////////////////////////////
   rule lookup_mem;
     //$display("receive mem response: ", fshow(sinkD.first));
     Transaction tr = truncate(sinkD.first.source >> 1);
-    pipeline.enter(requests.sub(tr).address, tr, ChannelD(sinkD.first));
+    Physical phys = unpack(requests.sub(tr).address);
+    //pipeline.enter(requests.sub(tr).address, tr, ChannelD(sinkD.first));
+    pipeline.enter(
+      phys.tag,
+      phys.index,
+      Invalid,
+      LLCRequest{
+        transaction: tr,
+        address: pack(phys),
+        request: ChannelD(sinkD.first)
+      }
+    );
     sinkD.deq;
   endrule
 
+  ///////////////////////////////////////////////////////////////////////////////////////
+  // Dequeue a memory response from the pipeline, and free the associated ressources
+  // (clear the refill/evict bit of the associated MSHR)
+  ///////////////////////////////////////////////////////////////////////////////////////
   rule pipeline_deq_d if (pipeline.valid &&& pipeline.request matches tagged ChannelD .request);
     Physical phys = unpack(pipeline.address);
 
     if (request.opcode == AccessAckData) begin
       transactions.refillDone(pipeline.transaction);
-      pipeline.deq(True, -1, Valid(phys.tag), request.data);
+      pipeline.deq(True, True, Valid(phys.tag), request.data);
 
       // Evict the old cache line
       if (pipeline.tag matches tagged Valid .tag) begin
@@ -100,7 +153,7 @@ module mkLLC(LLC);
           address: pack(Physical{tag: tag, index: phys.index, offset: 0}),
           size: fromInteger(valueof(TLog#(TDiv#(LineW,8)))),
           source: 2*zeroExtend(pipeline.transaction),
-          data: pipeline.line,
+          data: pipeline.data,
           mask: -1
         });
       end else begin
@@ -108,13 +161,17 @@ module mkLLC(LLC);
       end
     end else if (request.opcode == AccessAck) begin
       transactions.evictDone(pipeline.transaction);
-      pipeline.deq(False, 0, ?, ?);
+      pipeline.deq(False, False, ?, ?);
     end else begin
       $display("LLC: invalid memory response");
       $finish;
     end
   endrule
 
+  ///////////////////////////////////////////////////////////////////////////////////////
+  // Dequeue a cpu request from the pipeline, deq the request in case of a hit, or start
+  // a refill/evict sequence (forward progress: never allocate ressources here)
+  ///////////////////////////////////////////////////////////////////////////////////////
   rule pipeline_deq_a if (pipeline.valid &&& pipeline.request matches tagged ChannelA .request);
     Physical phys = unpack(request.address);
 
@@ -126,21 +183,27 @@ module mkLLC(LLC);
       transactions.evictDone(pipeline.transaction);
       transactions.refillDone(pipeline.transaction);
 
-      // Process request and send response
+      // Process request and send response, the "enq" is not blocking for forward progress
+      // because the compute units are guaranties to accept those messages
       case (request.opcode) matches
         GetFull : begin
           //$display("respond: 0x%h\n", pipeline.line);
-          pipeline.deq(False, 0, ?, ?);
+          pipeline.deq(False, False, ?, ?);
           sourceD.enq(ChannelD{
             opcode: AccessAckData,
             size: request.size,
             source: request.source,
-            data: pipeline.line,
+            data: pipeline.data,
             sink: ?
           });
         end
         PutData : begin
-          pipeline.deq(False, request.mask, ?, request.data);
+          Vector#(TDiv#(LineW,8), Bit#(8)) newData = unpack(pipeline.data);
+          for (Integer i=0; i < valueof(LineW)/8; i = i + 1) begin
+            if (request.mask[i] == 1) newData[i] = request.data[8*i+7:8*i];
+          end
+
+          pipeline.deq(False, True, ?, pack(newData));
           sourceD.enq(ChannelD{
             opcode: AccessAck,
             size: request.size,
@@ -156,7 +219,7 @@ module mkLLC(LLC);
       endcase
     end else begin
       // Cache miss
-      pipeline.deq(False, 0, ?, ?);
+      pipeline.deq(False, False, ?, ?);
 
       // Acquire the new cache line
       refillBuffer.enq(ChannelA{
@@ -194,136 +257,16 @@ module mkLLC(LLC);
   endinterface
 endmodule
 
+typedef struct {
+  LLCSink request;
+  Bit#(AddrW) address;
+  Transaction transaction;
+} LLCRequest deriving(Bits);
+
 typedef union tagged {
   ChannelA#(`TL_LLC) ChannelA;
   ChannelD#(`TL_LLC) ChannelD;
-} LLCPipeReq deriving(Bits);
-
-interface LLCPipe;
-  // Two cycles of latency
-  method Action enter(Bit#(32) address, Transaction tr, LLCPipeReq request);
-
-  method Action deq(Bool wrTag, Mask mask, Maybe#(Tag) newTag, Line newLine);
-  (* always_ready *) method Transaction transaction;
-  (* always_ready *) method LLCPipeReq request;
-  (* always_ready *) method Bit#(32) address;
-  (* always_ready *) method Maybe#(Tag) tag;
-  (* always_ready *) method Bool valid;
-  (* always_ready *) method Line line;
-  (* always_ready *) method Way way;
-endinterface
-
-(* synthesize *)
-module mkLLCPipe(LLCPipe);
-  ///////////////////////////////////////////////////////////////////////////////////////
-  // Random remplacement policy
-  ///////////////////////////////////////////////////////////////////////////////////////
-  Reg#(Way) randomWay <- mkReg(0);
-
-  ///////////////////////////////////////////////////////////////////////////////////////
-  // Tags
-  ///////////////////////////////////////////////////////////////////////////////////////
-  Vector#(Ways, MultiRF#(1, 1, Index, Maybe#(Tag)))
-    tagRams <- replicateM(mkForwardMultiRF(0, fromInteger(2 ** valueof(IndexW) - 1)));
-  Vector#(Ways, Reg#(Maybe#(Tag))) tagRegs <- replicateM(mkReg(Invalid));
-
-  Reg#(Bool) init <- mkReg(False);
-  Reg#(Index) initIndex <- mkReg(0);
-
-  rule init_rl if (!init);
-    for (Integer i=0; i < valueof(Ways); i = i + 1) begin
-      tagRams[i].writePorts[0].request(initIndex, Invalid);
-    end
-
-    initIndex <= initIndex + 1;
-    if (initIndex + 1 == 0) init <= True;
-  endrule
-
-  ///////////////////////////////////////////////////////////////////////////////////////
-  // Data
-  ///////////////////////////////////////////////////////////////////////////////////////
-  BRAM_DUAL_PORT_BE#(Bit#(TAdd#(TLog#(Ways), IndexW)), Line, MaskW)
-    dataRams <- mkBRAMCore2BE(valueof(Ways) * valueof(Sets), False);
-
-  ///////////////////////////////////////////////////////////////////////////////////////
-  // Stage 1 states
-  ///////////////////////////////////////////////////////////////////////////////////////
-  Reg#(Bool) stage1_valid[2] <- mkCReg(2, False);
-  Reg#(Transaction) stage1_transaction <- mkRegU;
-  Reg#(LLCPipeReq) stage1_request <- mkRegU;
-  Reg#(Bit#(32)) stage1_address <- mkRegU;
-
-  ///////////////////////////////////////////////////////////////////////////////////////
-  // Stage 2 states
-  ///////////////////////////////////////////////////////////////////////////////////////
-  Reg#(Bool) stage2_valid[2] <- mkCReg(2, False);
-  Reg#(Transaction) stage2_transaction <- mkRegU;
-  Reg#(LLCPipeReq) stage2_request <- mkRegU;
-  Reg#(Bit#(32)) stage2_address <- mkRegU;
-  Reg#(Maybe#(Tag)) stage2_tag <- mkRegU;
-  Reg#(Way) stage2_way <- mkRegU;
-
-  ///////////////////////////////////////////////////////////////////////////////////////
-  // Stage 1
-  ///////////////////////////////////////////////////////////////////////////////////////
-  rule matching if (stage1_valid[0] && !stage2_valid[1] && init);
-    Physical phys = unpack(stage1_address);
-    stage1_valid[0] <= False;
-    stage2_valid[1] <= True;
-
-    Maybe#(Tag) tag = tagRegs[randomWay];
-    Way way = randomWay;
-
-    for (Integer i=0; i < valueof(Ways); i = i + 1) if (tagRegs[i] == Valid(phys.tag)) begin
-      way = fromInteger(i);
-      tag = tagRegs[i];
-    end
-
-    dataRams.a.put(0, {way, phys.index}, ?);
-    stage2_transaction <= stage1_transaction;
-    stage2_request <= stage1_request;
-    stage2_address <= stage1_address;
-    stage2_tag <= tag;
-    stage2_way <= way;
-  endrule
-
-  ///////////////////////////////////////////////////////////////////////////////////////
-  // Stage 2
-  ///////////////////////////////////////////////////////////////////////////////////////
-  method transaction = stage2_transaction;
-  method valid = stage2_valid[0] && init;
-  method request = stage2_request;
-  method address = stage2_address;
-  method line = dataRams.a.read;
-  method tag = stage2_tag;
-  method way = stage2_way;
-
-  method Action deq(Bool wrTag, Mask mask, Maybe#(Tag) newTag, Line newLine)
-    if (stage2_valid[0] && init);
-    stage2_valid[0] <= False;
-
-    Physical phys = unpack(stage2_address);
-    if (wrTag) tagRams[stage2_way].writePorts[0].request(phys.index, newTag);
-    dataRams.b.put(mask, {stage2_way, phys.index}, newLine);
-  endmethod
-
-  ///////////////////////////////////////////////////////////////////////////////////////
-  // Stage 0
-  ///////////////////////////////////////////////////////////////////////////////////////
-  method Action enter(Bit#(32) addr, Transaction tr, LLCPipeReq req) if (!stage1_valid[1] && init);
-    Physical phys = unpack(addr);
-    randomWay <= randomWay + 1;
-    stage1_transaction <= tr;
-    stage1_valid[1] <= True;
-    stage1_address <= addr;
-    stage1_request <= req;
-
-    for (Integer w=0; w < valueof(Ways); w = w + 1) begin
-      let tag <- tagRams[w].readPorts[0].request(phys.index);
-      tagRegs[w] <= tag;
-    end
-  endmethod
-endmodule
+} LLCSink deriving(Bits);
 
 // The transaction queue is in charge of scheduling the requests/checking for hazards
 interface TransactionQueue;
@@ -394,7 +337,7 @@ module mkTransactionQueue(TransactionQueue);
   endmethod
 
   ///////////////////////////////////////////////////////////////////////////////////////
-  // Stage 0: add a new transaction, initialy support that we muts evict and refill a line
+  // Stage 0: add a new transaction, initialy suppose that we muts evict and refill a line
   ///////////////////////////////////////////////////////////////////////////////////////
   method Bool canEnter = !valid[1][head];
   method ActionValue#(Transaction) enter(Index index) if(!valid[1][head]);

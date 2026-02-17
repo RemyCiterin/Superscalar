@@ -13,6 +13,9 @@ import TLBram::*;
 import RvCore :: *;
 import RvSystem::*;
 
+import RvDCacheCC::*;
+import CachePipe::*;
+
 
 interface MainIfc;
   (* always_ready, always_enabled *)
