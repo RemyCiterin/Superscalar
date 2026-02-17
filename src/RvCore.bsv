@@ -55,14 +55,6 @@ module mkCPU(CpuIfc);
     trace_file <= log;
   endrule
 
-  Reg#(File) trace_file <- mkReg(InvalidFile);
-
-  rule init_log if (cycle == 0 && logTrace);
-    let log <- $fopen("trace.txt");
-    $fdisplay(log, "Kanata 0004");
-    trace_file <= log;
-  endrule
-
   ////////////////////////////////////////////////////////////////////////////
   // Define system registers
   ////////////////////////////////////////////////////////////////////////////

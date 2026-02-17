@@ -71,8 +71,6 @@ module mkFetch(FetchIfc);
   Reg#(Bit#(32)) nextPc[3] <- mkCReg(3, 'h80000000);
   Reg#(Bit#(32)) uid <- mkReg(0);
 
-  Reg#(Bit#(32)) uid <- mkReg(0);
-
   Bool bpredEnabled = True;
 
   String fileName = case (supLogSize) matches
@@ -175,7 +173,6 @@ typedef struct {
   Super#(CauseException) cause;
   BranchPredState bstate;
   Super#(Bool) exception;
-  Super#(Bit#(32)) uid;
   Super#(Bit#(32)) pc;
   Epoch epoch;
 } Bundle deriving(Bits);

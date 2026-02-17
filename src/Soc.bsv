@@ -13,7 +13,6 @@ import TLBram::*;
 import RvCore :: *;
 import RvSystem::*;
 
-import RvDCacheCC::*;
 import CachePipe::*;
 
 
