@@ -55,6 +55,14 @@ module mkCPU(CpuIfc);
     trace_file <= log;
   endrule
 
+  Reg#(File) trace_file <- mkReg(InvalidFile);
+
+  rule init_log if (cycle == 0 && logTrace);
+    let log <- $fopen("trace.txt");
+    $fdisplay(log, "Kanata 0004");
+    trace_file <= log;
+  endrule
+
   ////////////////////////////////////////////////////////////////////////////
   // Define system registers
   ////////////////////////////////////////////////////////////////////////////
@@ -324,6 +332,9 @@ module mkCPU(CpuIfc);
           $display("        ", showReg(rd), " <= %h", result);
         end
 
+        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 Wb", uid);
+
         if (rd != 0) regFile.writePorts[i].request(rd, result);
         consumed[i] = True;
 
@@ -368,6 +379,7 @@ module mkCPU(CpuIfc);
 
         if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
         if (logTrace) $fdisplay(trace_file, "E %d 0 C", uid);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 Ex", uid);
       end
     end
 
@@ -442,7 +454,14 @@ module mkCPU(CpuIfc);
 
         if (debug) $display(cycle, " commit 0x%h: ", pc, showRvInstr(instr));
 
-        if (exception) $display("pc: %h cycle: %d instret: %d", pc, cycle, instret);
+        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 Ex", uid);
+        if (logTrace) $fdisplay(trace_file, "S %d 0 Wb", uid);
+
+        if (exception) $display(
+          "pc: %h cycle: %d instret: %d mis-pred: %d",
+          pc, cycle, instret, fetch.numMisPred
+        );
 
         if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
         if (logTrace) $fdisplay(trace_file, "E %d 0 C", uid);
@@ -561,6 +580,18 @@ module mkCPU(CpuIfc);
 
       if (rdy) begin
         consumed[i] = True;
+        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 Is", uid);
+        if (logTrace) $fdisplay(trace_file, "S %d 0 Ex", uid);
+        if (logTrace) $fdisplay(
+          trace_file,
+          "L %d 0 0x%h: ", uid, pc,
+          " ", fshow(instr.opcode),
+          " ", showReg(rd),
+          " ", showReg(rs1),
+          " ", showReg(rs2)
+        );
+
         if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
         if (logTrace) $fdisplay(trace_file, "E %d 0 Is", uid);
         if (logTrace) $fdisplay(trace_file, "S %d 0 Ex", uid);

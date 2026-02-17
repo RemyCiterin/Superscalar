@@ -61,12 +61,16 @@ interface FetchIfc;
   method Action trainHit(BranchPredTrain infos);
 
   interface TLMaster#(32, 32, 8, 8, 0) master;
+
+  (* always_ready *) method Bit#(32) numMisPred;
 endinterface
 
 (* synthesize *)
 module mkFetch(FetchIfc);
   Reg#(Epoch) nextEpoch[3] <- mkCReg(3, 0);
   Reg#(Bit#(32)) nextPc[3] <- mkCReg(3, 'h80000000);
+  Reg#(Bit#(32)) uid <- mkReg(0);
+
   Reg#(Bit#(32)) uid <- mkReg(0);
 
   Bool bpredEnabled = True;
@@ -95,10 +99,13 @@ module mkFetch(FetchIfc);
 
   interface master = icache.master;
 
+  method numMisPred = bpred.numMisPred;
+
   method ActionValue#(FetchOutput) get if (queue.canDeq && icache.valid);
     match {.pc, .epoch} = queue.first;
     queue.deq;
 
+    Bit#(32) currentUid = uid;
     Bit#(SupLogSize) laneBaseIndex = truncate(pc >> 2);
     Bit#(32) basePc = pc & ~pcMask;
 
@@ -129,8 +136,14 @@ module mkFetch(FetchIfc);
       end
     end
 
+    for (Integer i=0; i < supSize; i = i + 1) if (mask[i]) begin
+      currentUid = currentUid + 1;
+      uidVec[i] = currentUid;
+    end
+
     icache.deq;
-    uid <= uid + fromInteger(supSize);
+
+    uid <= currentUid;
 
     return FetchOutput {
       exception: replicate(False),
@@ -162,6 +175,7 @@ typedef struct {
   Super#(CauseException) cause;
   BranchPredState bstate;
   Super#(Bool) exception;
+  Super#(Bit#(32)) uid;
   Super#(Bit#(32)) pc;
   Epoch epoch;
 } Bundle deriving(Bits);

@@ -33,6 +33,7 @@ pkgs.mkShell {
     pkgs.verilator
     pkgs.verilog
     pkgs.gtkwave
+    izumi
 
     libizumi
     izumi
