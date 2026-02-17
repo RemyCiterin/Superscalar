@@ -164,7 +164,7 @@ function AluResponse execAlu(AluRequest req, Bool branch);
     //Clz    : countLeadingZeros(rs1);
     //Ctz    : countTrailingZeros(rs1);
     //Cpop   : countSetBits(rs1);
-    default: unJust(rd_fwd);
+    default: validValue(rd_fwd);
   endcase;
 
   let nextPc = case (req.instr.opcode) matches

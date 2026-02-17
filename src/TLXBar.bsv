@@ -191,6 +191,10 @@ module mkIncreaseWidthChannelA#(
     mask[Token#(ratio)'(meta.address[high:low])] = msg.mask;
     data[Token#(ratio)'(meta.address[high:low])] = msg.data;
 
+    if (!hasDataA(msg.opcode) && msg.size > fromInteger(log2(valueof(dataW)/8))) begin
+      mask = replicate(-1);
+    end
+
     if (index == maxBound || meta.last) begin
       slave.enq(ChannelA{
         mask: packArray(vectorToArray(mask)),

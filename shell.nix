@@ -35,6 +35,9 @@ pkgs.mkShell {
     pkgs.gtkwave
     izumi
 
+    libizumi
+    izumi
+
     # Some tools for FPGA implementation
     pkgs.yosys
     pkgs.nextpnr

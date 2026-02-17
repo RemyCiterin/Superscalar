@@ -4,6 +4,7 @@ rtl
 elf_to_hex
 rust/target
 Mem*.hex
+Mem*.mem
 soft/zig-cache
 soft/zig-out
 soft/firmware.asm

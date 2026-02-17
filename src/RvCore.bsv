@@ -2,6 +2,7 @@ import MultiRegFile :: *;
 import RvBranchPred :: *;
 import ForwardBRAM :: *;
 import BuildVector :: *;
+import ConfigReg :: *;
 import BRAMCore :: *;
 import RvDCache :: *;
 import RegFile :: *;
@@ -39,11 +40,20 @@ typedef struct {
 module mkCPU(CpuIfc);
   Bool debug = False;
   Bool logTrace = False;
+  Bool useLateIssue = True;
   Bool useForwarding = True;
 
-  Reg#(Bit#(32)) cycle <- mkReg(0);
+  Reg#(Bit#(32)) cycle <- mkConfigReg(0);
 
-  Reg#(Bit#(32)) instret <- mkReg(0);
+  Reg#(Bit#(32)) instret <- mkConfigReg(0);
+
+  Reg#(File) trace_file <- mkReg(InvalidFile);
+
+  rule init_log if (cycle == 0 && logTrace);
+    let log <- $fopen("trace.txt");
+    $fdisplay(log, "Kanata 0004");
+    trace_file <= log;
+  endrule
 
   Reg#(File) trace_file <- mkReg(InvalidFile);
 
@@ -59,7 +69,8 @@ module mkCPU(CpuIfc);
   let cycleCsr <- mkCycleCsr;
   let instrCsr <- mkInstructionCounterCsr;
   let system <- mkCsrUnit(List::append(cycleCsr, instrCsr.csrs));
-  Fifo#(1, Bit#(32)) csrOut <- mkPipelineFifo;
+  Reg#(AluRequest) csrExec2 <- mkRegU;
+  Reg#(Bit#(32)) csrExec3 <- mkRegU;
 
   rule incrCycle;
     cycle <= cycle + 1;
@@ -90,12 +101,13 @@ module mkCPU(CpuIfc);
   ////////////////////////////////////////////////////////////////////////////
   DispatchBuffer dispatchBuffer <- mkDispatchBuffer;
   DispatchBuffer commitBuffer <- mkDispatchBuffer;
+  DispatchBuffer execBuffer <- mkDispatchBuffer;
   Buffer#(ExecEntry) wbBuffer <- mkBuffer;
 
   ////////////////////////////////////////////////////////////////////////////
   // Define execution units
   ////////////////////////////////////////////////////////////////////////////
-  Vector#(SupSize, ExecIfc#(1)) alu <- replicateM(mkExecAlu);
+  Vector#(SupSize, ExecIfc#(1)) alu <- replicateM(mkExecAlu(useLateIssue));
 
   let lsu_ifc <- mkLsu;
   let uart = lsu_ifc.transmit;
@@ -107,27 +119,38 @@ module mkCPU(CpuIfc);
   // pipeline to the register-read stage.
   //
   // The entries of the scoreboard are from oldest to youngest
+  //
+  // This stage is also in charge of propagating data from the write-back
+  // stage and forwarding circuit to the late ALUs operands.
   ////////////////////////////////////////////////////////////////////////////
   List#(RWire#(Tuple2#(ArchReg, Maybe#(Bit#(32)))))
-    scoreboard <- List::replicateM(2*supSize, mkRWire);
+    scoreboard <- List::replicateM(3*supSize, mkRWire);
 
   (* fire_when_enabled, no_implicit_conditions *)
   rule scoreboard_canon;
+    Vector#(SupSize, Maybe#(Bit#(32))) wakeupRs1Ex1 = replicate(Invalid);
+    Vector#(SupSize, Maybe#(Bit#(32))) wakeupRs2Ex1 = replicate(Invalid);
+
     // Stage 2
     for (Integer i=0; i < supSize; i = i + 1) if (wbBuffer.mask[i]) begin
       RvInstr instr = wbBuffer.instr[i];
       Maybe#(Bit#(32)) result = ?;
       ArchReg rd = instr.rd;
 
-      if (instr.isSystem) result = Invalid;
+      if (instr.isSystem) result = Valid(csrExec3);
       else if (instr.isMemAccess)
-        result = lsu.exec2.valid ? Valid(lsu.exec2.result) : Invalid;
-      else result = alu[i].exec2.valid ? Valid(alu[i].exec2.result) : Invalid;
+        result = lsu.exec3.valid ? Valid(lsu.exec3.result) : Invalid;
+      else result = alu[i].exec3.valid ? Valid(alu[i].exec3.result) : Invalid;
 
       scoreboard[i].wset(tuple2(rd, result));
+
+      for (Integer j=0; j < supSize; j = j + 1) begin
+        if (rd == execBuffer.instr[j].rs1) wakeupRs1Ex1[j] = result;
+        if (rd == execBuffer.instr[j].rs2) wakeupRs2Ex1[j] = result;
+      end
     end
 
-    // Stage 1
+    // Stage 2
     for (Integer i=0; i < supSize; i = i + 1)
     if (commitBuffer.mask[i] && commitBuffer.epoch == epoch[0]) begin
       RvInstr instr = commitBuffer.instr[i];
@@ -135,10 +158,46 @@ module mkCPU(CpuIfc);
       ArchReg rd = instr.rd;
 
       if (instr.isSystem) result = Invalid;
+      else if (instr.isMemAccess) result = lsu.exec2.forward;
+      else result = alu[i].exec2.forward;
+
+      scoreboard[supSize+i].wset(tuple2(rd, result));
+
+      for (Integer j=0; j < supSize; j = j + 1) begin
+        if (rd == execBuffer.instr[j].rs1) wakeupRs1Ex1[j] = result;
+        if (rd == execBuffer.instr[j].rs2) wakeupRs2Ex1[j] = result;
+      end
+    end
+
+    // Stage 1
+    for (Integer i=0; i < supSize; i = i + 1)
+    if (execBuffer.mask[i] && execBuffer.epoch == epoch[0]) begin
+      RvInstr instr = execBuffer.instr[i];
+      Maybe#(Bit#(32)) result = ?;
+      ArchReg rd = instr.rd;
+
+      if (instr.isSystem) result = Invalid;
       else if (instr.isMemAccess) result = lsu.exec1.forward;
       else result = alu[i].exec1.forward;
 
-      scoreboard[supSize+i].wset(tuple2(rd, result));
+      scoreboard[2*supSize+i].wset(tuple2(rd, result));
+
+      for (Integer j=0; j < supSize; j = j + 1) begin
+        if (j > i && rd == execBuffer.instr[j].rs1) wakeupRs1Ex1[j] = result;
+        if (j > i && rd == execBuffer.instr[j].rs2) wakeupRs2Ex1[j] = result;
+      end
+    end
+
+    for (Integer j=0; j < supSize; j = j + 1)
+    if (useLateIssue && execBuffer.epoch == epoch[0]) begin
+      if (wakeupRs1Ex1[j] matches tagged Valid .d) alu[j].exec1.wakeupRs1(d);
+      if (wakeupRs2Ex1[j] matches tagged Valid .d) alu[j].exec1.wakeupRs2(d);
+    end
+
+    for (Integer j=0; j < supSize; j = j + 1)
+    if (useLateIssue && execBuffer.epoch != epoch[0]) begin
+      alu[j].exec1.wakeupRs1(?);
+      alu[j].exec1.wakeupRs2(?);
     end
   endrule
 
@@ -178,6 +237,60 @@ module mkCPU(CpuIfc);
   endrule
 
   ////////////////////////////////////////////////////////////////////////////
+  // Execution stage to write-back stage
+  ////////////////////////////////////////////////////////////////////////////
+  rule execRl if (execBuffer.mask != replicate(False));
+    Bool stop = False;
+    Bool useMem = False;
+    Bool useSys = False;
+    Super#(Bool) consumed = replicate(False);
+
+    for (Integer i=0; i < supSize; i = i + 1) if (!stop && execBuffer.mask[i]) begin
+      RvInstr instr = execBuffer.instr[i];
+      Bit#(32) uid = execBuffer.uid[i];
+
+      Bool rdy = True;
+      if (instr.isSystem && useSys) rdy = False;
+      if (instr.isMemAccess && useMem) rdy = False;
+      if (instr.isSystem && !system.canEnter) rdy = False;
+      if (instr.isMemAccess && !lsu.exec1.valid) rdy = False;
+      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec1.valid) rdy = False;
+
+      if (!rdy) stop = True;
+
+      if (rdy) begin
+        if (instr.isMemAccess) begin
+          lsu.exec1.deq;
+          useMem = True;
+        end else if (instr.isSystem) begin
+          system.enter(csrExec2, Machine);
+          useSys = True;
+        end else begin
+          alu[i].exec1.deq;
+        end
+
+        consumed[i] = True;
+        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 Ex", uid);
+        if (logTrace) $fdisplay(trace_file, "S %d 0 C", uid);
+      end
+    end
+
+    execBuffer.consume(consumed);
+    commitBuffer.put(Bundle{
+      bprediction: execBuffer.bprediction,
+      exception: execBuffer.exception,
+      bstate: execBuffer.bstate,
+      instr: execBuffer.instr,
+      epoch: execBuffer.epoch,
+      cause: execBuffer.cause,
+      uid: execBuffer.uid,
+      pc: execBuffer.pc,
+      mask: consumed
+    });
+  endrule
+
+  ////////////////////////////////////////////////////////////////////////////
   // Write-back instructions: must be in-order as the pipeline may contains
   // multiple instructions with the same destination register
   ////////////////////////////////////////////////////////////////////////////
@@ -195,9 +308,8 @@ module mkCPU(CpuIfc);
       Bool rdy = True;
       if (instr.isSystem && useSys) rdy = False;
       if (instr.isMemAccess && useMem) rdy = False;
-      if (instr.isSystem && !csrOut.canDeq) rdy = False;
-      if (instr.isMemAccess && !lsu.exec2.valid) rdy = False;
-      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec2.valid) rdy = False;
+      if (instr.isMemAccess && !lsu.exec3.valid) rdy = False;
+      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec3.valid) rdy = False;
 
       if (!rdy) stop = True;
 
@@ -205,16 +317,15 @@ module mkCPU(CpuIfc);
         Bit#(32) result = ?;
 
         if (instr.isMemAccess) begin
-          result = lsu.exec2.result;
-          lsu.exec2.deq;
+          result = lsu.exec3.result;
+          lsu.exec3.deq;
           useMem = True;
         end else if (instr.isSystem) begin
-          result = csrOut.first;
+          result = csrExec3;
           useSys = True;
-          csrOut.deq;
         end else begin
-          result = alu[i].exec2.result;
-          alu[i].exec2.deq;
+          result = alu[i].exec3.result;
+          alu[i].exec3.deq;
         end
 
         if (debug && rd != 0) begin
@@ -226,6 +337,9 @@ module mkCPU(CpuIfc);
 
         if (rd != 0) regFile.writePorts[i].request(rd, result);
         consumed[i] = True;
+
+        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 Wb", uid);
       end
     end
 
@@ -251,19 +365,20 @@ module mkCPU(CpuIfc);
       if (instr.isSystem && useSys) rdy = False;
       if (instr.isMemAccess && useMem) rdy = False;
       if (instr.isSystem && !system.canDeq) rdy = False;
-      if (instr.isMemAccess && !lsu.exec1.valid) rdy = False;
-      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec1.valid) rdy = False;
+      if (instr.isMemAccess && !lsu.exec2.valid) rdy = False;
+      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec2.valid) rdy = False;
       if (!rdy) stop = True;
 
       if (rdy) begin
-        if (!instr.isMemAccess && !instr.isSystem) alu[i].exec1.commit(False);
-        if (instr.isMemAccess) lsu.exec1.commit(False);
+        if (!instr.isMemAccess && !instr.isSystem) alu[i].exec2.deq(False);
+        if (instr.isMemAccess) lsu.exec2.deq(False);
         if (instr.isSystem) system.deq(False);
         if (instr.isMemAccess) useMem = True;
         if (instr.isSystem) useSys = True;
         consumed[i] = True;
 
         if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 C", uid);
         if (logTrace) $fdisplay(trace_file, "E %d 0 Ex", uid);
       end
     end
@@ -273,7 +388,7 @@ module mkCPU(CpuIfc);
 
   Reg#(Bit#(32)) forwardProgess <- mkReg(0);
 
-  rule dead_lock if (forwardProgess >= 100000);
+  rule dead_lock if (forwardProgess >= 1000000);
     $display("dead lock at %h", commitPc);
     $finish();
   endrule
@@ -305,21 +420,20 @@ module mkCPU(CpuIfc);
 
       let rdy = !(instr.isMemAccess && useMem);
 
-      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec1.valid) rdy = False;
-      if (instr.isMemAccess && !lsu.exec1.valid) rdy = False;
+      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec2.valid) rdy = False;
+      if (instr.isMemAccess && !lsu.exec2.valid) rdy = False;
       if (instr.isSystem && !system.canDeq) rdy = False;
-      if (instr.isSystem && !csrOut.canEnq) rdy = False;
       if (instr.isSystem && useSys) rdy = False;
       if (!rdy) stop = True;
 
-      let exception = alu[i].exec1.exception;
-      let nextPc = alu[i].exec1.nextPc;
-      let cause = alu[i].exec1.cause;
+      let exception = alu[i].exec2.exception;
+      let nextPc = alu[i].exec2.nextPc;
+      let cause = alu[i].exec2.cause;
 
       if (instr.isMemAccess) begin
-        exception = lsu.exec1.exception;
-        nextPc = lsu.exec1.nextPc;
-        cause = lsu.exec1.cause;
+        exception = lsu.exec2.exception;
+        nextPc = lsu.exec2.nextPc;
+        cause = lsu.exec2.cause;
       end
 
       if (instr.isSystem) begin
@@ -349,15 +463,19 @@ module mkCPU(CpuIfc);
           pc, cycle, instret, fetch.numMisPred
         );
 
+        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 C", uid);
+        if (!exception && logTrace) $fdisplay(trace_file, "S %d 0 Wb", uid);
+
         if (instr.isMemAccess) begin
-          lsu.exec1.commit(!exception);
+          lsu.exec2.deq(!exception);
           useMem = True;
         end else if (instr.isSystem) begin
+          csrExec3 <= system.response.rd;
           system.deq(!exception);
-          csrOut.enq(system.response.rd);
           useSys = True;
         end else begin
-          alu[i].exec1.commit(!exception);
+          alu[i].exec2.deq(!exception);
         end
 
         currentPc = nextPc;
@@ -398,6 +516,9 @@ module mkCPU(CpuIfc);
     instret <= instrCounter;
     commitPc <= currentPc;
   endrule
+
+  Reg#(Bit#(32)) stalled1 <- mkReg(0);
+  Reg#(Bit#(32)) stalled2 <- mkReg(0);
 
   ////////////////////////////////////////////////////////////////////////////
   // Enter new instruction to the pipeline, also detect read-after-write hazard
@@ -448,9 +569,9 @@ module mkCPU(CpuIfc);
         if (rd != 0 && rd == dispatchBuffer.instr[j].rd) rdy = False;
       end
 
-      if (!rdy1 || !rdy2) rdy = False;
+      if ((!rdy1 || !rdy2) && !useLateIssue) rdy = False;
+      if ((!rdy1 || !rdy2) && !supportLateIssue(instr.opcode) && useLateIssue) rdy = False;
 
-      if (!system.canEnter && instr.isSystem) rdy = False;
       if (!lsu.canEnter && instr.isMemAccess) rdy = False;
       if (useMem && instr.isMemAccess) rdy = False;
       if (useSys && instr.isSystem) rdy = False;
@@ -459,6 +580,17 @@ module mkCPU(CpuIfc);
 
       if (rdy) begin
         consumed[i] = True;
+        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 Is", uid);
+        if (logTrace) $fdisplay(trace_file, "S %d 0 Ex", uid);
+        if (logTrace) $fdisplay(
+          trace_file,
+          "L %d 0 0x%h: ", uid, pc,
+          " ", fshow(instr.opcode),
+          " ", showReg(rd),
+          " ", showReg(rs1),
+          " ", showReg(rs2)
+        );
 
         if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
         if (logTrace) $fdisplay(trace_file, "E %d 0 Is", uid);
@@ -480,19 +612,19 @@ module mkCPU(CpuIfc);
         };
 
         if (instr.isSystem) begin
-          system.enter(aluReq, Machine);
+          csrExec2 <= aluReq;
           useSys = True;
         end else if (instr.isMemAccess) begin
-          lsu.enter(aluReq, dispatchBuffer.epoch);
+          lsu.enter(aluReq, rdy1, rdy2);
           useMem = True;
         end else begin
-          alu[i].enter(aluReq, dispatchBuffer.epoch);
+          alu[i].enter(aluReq, rdy1, rdy2);
         end
       end
     end
 
     dispatchBuffer.consume(consumed);
-    commitBuffer.put(Bundle{
+    execBuffer.put(Bundle{
       bprediction: dispatchBuffer.bprediction,
       exception: dispatchBuffer.exception,
       bstate: dispatchBuffer.bstate,

@@ -69,6 +69,7 @@ endinterface
 module mkFetch(FetchIfc);
   Reg#(Epoch) nextEpoch[3] <- mkCReg(3, 0);
   Reg#(Bit#(32)) nextPc[3] <- mkCReg(3, 'h80000000);
+  Reg#(Bit#(32)) uid <- mkReg(0);
 
   Reg#(Bit#(32)) uid <- mkReg(0);
 
@@ -117,6 +118,7 @@ module mkFetch(FetchIfc);
       Bool exception = False;
       mask[i] = exception ? fromInteger(i) == laneBaseIndex : fromInteger(i) >= laneBaseIndex;
       pcVec[i] = basePc + 4 * fromInteger(i);
+      uidVec[i] = uid + fromInteger(i);
     end
 
     if (supLogSize == 0) mask[0] = True;
@@ -140,6 +142,7 @@ module mkFetch(FetchIfc);
     end
 
     icache.deq;
+
     uid <= currentUid;
 
     return FetchOutput {
@@ -166,6 +169,7 @@ endmodule
 
 typedef struct {
   Super#(Bool) mask;
+  Super#(Bit#(32)) uid;
   Super#(RvInstr) instr;
   Super#(Bit#(32)) bprediction;
   Super#(CauseException) cause;
