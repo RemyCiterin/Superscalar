@@ -409,6 +409,7 @@ function Bool supportLateIssue(Operation opcode);
     Blt:    True;
     Bltu:   True;
     Bge:    True;
+    Bgeu:   True;
     default: False;
   endcase;
 endfunction

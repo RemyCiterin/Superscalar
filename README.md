@@ -7,7 +7,7 @@ A superscalar RISC-V CPU implementing rv32-im supporting Tiny Coupled memories.
 ## Supported features
 
 - RV32-I
-- Superscalar exception: the number of ways must be a power of two, in practice 1 or 2 gives the
+- Superscalar execution: the number of ways must be a power of two, in practice 1 or 2 gives the
     best results; beyond that, the results are less interesting compared to the gain in surface
     area/loss of frequency. It use a xor-based multi-ported register file.
 - Forwarding from the ALUs/LSU to the register read stage
@@ -18,15 +18,16 @@ A superscalar RISC-V CPU implementing rv32-im supporting Tiny Coupled memories.
 - Data and instruction caches (up to one operation per cycle)
 - Bitmap extension (`Zba` and `Zbb`)
 - System registers (CSRs)
+- Late ALU support (one per execution lane, like in this
+    [article](https://doi.org/10.1109/ICCD.2015.7357163)), doing so the load-to-use latency is one
+    cycle, or two for load-to-addrgen
 
 ## TODO
 
-- Late ALU, similar to this [article](https://doi.org/10.1109/ICCD.2015.7357163), but I want to
-    restrict the branch resulutions to the early ALU, to keep the overall design of the commit stage
+- Better branch prediction
 - Implement pipelined mul/div/clz/ctz/cpop, currently multiplication is either implemented using a
     finite-state-machine, either using the DSP of the fpga.
 - Exceptions and interrupts
-- add an instruction cache
 - atomic memory operations, opens the door to parallelism
 - cache coherence using TileLink
 - add an MMU/TLB
@@ -36,24 +37,9 @@ A superscalar RISC-V CPU implementing rv32-im supporting Tiny Coupled memories.
 
 ## Performances
 
-Current score is around 4.1 CoreMark/MHz with 2 issues per cycle.
+Current score is around 4.7 CoreMark/MHz with 2 issues per cycle and using two late-alus.
 
 ## Experiments
-
-### Late ALU
-
-My firsts tentatives of adding a late ALU did not yield conclusive results, because increasing the
-pipeline length significantly increased the number of stalls. Previously, I blocked the pipeline
-as soon as I encountered write-after-write hazards, so increasing its length increased these
-constraints even when there were no read-after-write hazards.
-Therefore, I changed the pipeline structure to avoid blocking in this case (except for WAW hazards
-between two instructions in the same bundle), at the cost of an in-order write-back stage and a
-more complex forwarding circuit. This allows increasing the number of stages without impacting
-performance.
-I now need to add the new ALU and the wakeup circuit to accept instructions whose operands are not
-yet known.
-I also want to restrict this second ALU to instructions without control flow, this allow to keep the
-design of the pipeline relativly simple (no speculative memory/system operations).
 
 ### Move forwarding
 
