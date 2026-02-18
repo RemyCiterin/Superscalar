@@ -62,7 +62,8 @@ module mkCPU(CpuIfc);
   let instrCsr <- mkInstructionCounterCsr;
   let system <- mkCsrUnit(List::append(cycleCsr, instrCsr.csrs));
   Reg#(AluRequest) csrExec2 <- mkRegU;
-  Reg#(Bit#(32)) csrExec3 <- mkRegU;
+  Reg#(AluRequest) csrExec3 <- mkRegU;
+  Reg#(Bit#(32)) csrExec4 <- mkRegU;
 
   rule incrCycle;
     cycle <= cycle + 1;
@@ -93,7 +94,8 @@ module mkCPU(CpuIfc);
   ////////////////////////////////////////////////////////////////////////////
   DispatchBuffer dispatchBuffer <- mkDispatchBuffer;
   DispatchBuffer commitBuffer <- mkDispatchBuffer;
-  DispatchBuffer execBuffer <- mkDispatchBuffer;
+  DispatchBuffer execBuffer1 <- mkDispatchBuffer;
+  DispatchBuffer execBuffer2 <- mkDispatchBuffer;
   Buffer#(ExecEntry) wbBuffer <- mkBuffer;
 
   ////////////////////////////////////////////////////////////////////////////
@@ -116,33 +118,38 @@ module mkCPU(CpuIfc);
   // stage and forwarding circuit to the late ALUs operands.
   ////////////////////////////////////////////////////////////////////////////
   List#(RWire#(Tuple2#(ArchReg, Maybe#(Bit#(32)))))
-    scoreboard <- List::replicateM(3*supSize, mkRWire);
+    scoreboard <- List::replicateM(4*supSize, mkRWire);
 
   (* fire_when_enabled, no_implicit_conditions *)
   rule scoreboard_canon;
     Vector#(SupSize, Maybe#(Bit#(32))) wakeupRs1Ex1 = replicate(Invalid);
     Vector#(SupSize, Maybe#(Bit#(32))) wakeupRs2Ex1 = replicate(Invalid);
 
-    // Stage 2
+    Vector#(SupSize, Maybe#(Bit#(32))) wakeupRs1Ex2 = replicate(Invalid);
+    Vector#(SupSize, Maybe#(Bit#(32))) wakeupRs2Ex2 = replicate(Invalid);
+
+    // Stage 4
     for (Integer i=0; i < supSize; i = i + 1) if (wbBuffer.mask[i]) begin
       RvInstr instr = wbBuffer.instr[i];
       Maybe#(Bit#(32)) result = ?;
       ArchReg rd = instr.rd;
 
-      if (instr.isSystem) result = Valid(csrExec3);
+      if (instr.isSystem) result = Valid(csrExec4);
       else if (instr.isMemAccess)
-        result = lsu.exec3.valid ? Valid(lsu.exec3.result) : Invalid;
-      else result = alu[i].exec3.valid ? Valid(alu[i].exec3.result) : Invalid;
+        result = lsu.exec4.valid ? Valid(lsu.exec4.result) : Invalid;
+      else result = alu[i].exec4.valid ? Valid(alu[i].exec4.result) : Invalid;
 
       scoreboard[i].wset(tuple2(rd, result));
 
       for (Integer j=0; j < supSize; j = j + 1) begin
-        if (rd == execBuffer.instr[j].rs1) wakeupRs1Ex1[j] = result;
-        if (rd == execBuffer.instr[j].rs2) wakeupRs2Ex1[j] = result;
+        if (rd == execBuffer2.instr[j].rs1) wakeupRs1Ex2[j] = result;
+        if (rd == execBuffer2.instr[j].rs2) wakeupRs2Ex2[j] = result;
+        if (rd == execBuffer1.instr[j].rs1) wakeupRs1Ex1[j] = result;
+        if (rd == execBuffer1.instr[j].rs2) wakeupRs2Ex1[j] = result;
       end
     end
 
-    // Stage 2
+    // Stage 3
     for (Integer i=0; i < supSize; i = i + 1)
     if (commitBuffer.mask[i] && commitBuffer.epoch == epoch[0]) begin
       RvInstr instr = commitBuffer.instr[i];
@@ -150,21 +157,44 @@ module mkCPU(CpuIfc);
       ArchReg rd = instr.rd;
 
       if (instr.isSystem) result = Invalid;
-      else if (instr.isMemAccess) result = lsu.exec2.forward;
-      else result = alu[i].exec2.forward;
+      else if (instr.isMemAccess) result = lsu.exec3.forward;
+      else result = alu[i].exec3.forward;
 
       scoreboard[supSize+i].wset(tuple2(rd, result));
 
       for (Integer j=0; j < supSize; j = j + 1) begin
-        if (rd == execBuffer.instr[j].rs1) wakeupRs1Ex1[j] = result;
-        if (rd == execBuffer.instr[j].rs2) wakeupRs2Ex1[j] = result;
+        if (rd == execBuffer2.instr[j].rs1) wakeupRs1Ex2[j] = result;
+        if (rd == execBuffer2.instr[j].rs2) wakeupRs2Ex2[j] = result;
+        if (rd == execBuffer1.instr[j].rs1) wakeupRs1Ex1[j] = result;
+        if (rd == execBuffer1.instr[j].rs2) wakeupRs2Ex1[j] = result;
+      end
+    end
+
+    // Stage 2
+    for (Integer i=0; i < supSize; i = i + 1)
+    if (execBuffer2.mask[i] && execBuffer2.epoch == epoch[0]) begin
+      RvInstr instr = execBuffer2.instr[i];
+      Maybe#(Bit#(32)) result = ?;
+      ArchReg rd = instr.rd;
+
+      if (instr.isSystem) result = Invalid;
+      else if (instr.isMemAccess) result = lsu.exec2.forward;
+      else result = alu[i].exec2.forward;
+
+      scoreboard[2*supSize+i].wset(tuple2(rd, result));
+
+      for (Integer j=0; j < supSize; j = j + 1) begin
+        if (j > i && rd == execBuffer2.instr[j].rs1) wakeupRs1Ex2[j] = result;
+        if (j > i && rd == execBuffer2.instr[j].rs2) wakeupRs2Ex2[j] = result;
+        if (rd == execBuffer1.instr[j].rs1) wakeupRs1Ex1[j] = result;
+        if (rd == execBuffer1.instr[j].rs2) wakeupRs2Ex1[j] = result;
       end
     end
 
     // Stage 1
     for (Integer i=0; i < supSize; i = i + 1)
-    if (execBuffer.mask[i] && execBuffer.epoch == epoch[0]) begin
-      RvInstr instr = execBuffer.instr[i];
+    if (execBuffer1.mask[i] && execBuffer1.epoch == epoch[0]) begin
+      RvInstr instr = execBuffer1.instr[i];
       Maybe#(Bit#(32)) result = ?;
       ArchReg rd = instr.rd;
 
@@ -172,24 +202,34 @@ module mkCPU(CpuIfc);
       else if (instr.isMemAccess) result = lsu.exec1.forward;
       else result = alu[i].exec1.forward;
 
-      scoreboard[2*supSize+i].wset(tuple2(rd, result));
+      scoreboard[3*supSize+i].wset(tuple2(rd, result));
 
       for (Integer j=0; j < supSize; j = j + 1) begin
-        if (j > i && rd == execBuffer.instr[j].rs1) wakeupRs1Ex1[j] = result;
-        if (j > i && rd == execBuffer.instr[j].rs2) wakeupRs2Ex1[j] = result;
+        if (j > i && rd == execBuffer1.instr[j].rs1) wakeupRs1Ex1[j] = result;
+        if (j > i && rd == execBuffer1.instr[j].rs2) wakeupRs2Ex1[j] = result;
       end
     end
 
-    for (Integer j=0; j < supSize; j = j + 1)
-    if (useLateIssue && execBuffer.epoch == epoch[0]) begin
-      if (wakeupRs1Ex1[j] matches tagged Valid .d) alu[j].exec1.wakeupRs1(d);
-      if (wakeupRs2Ex1[j] matches tagged Valid .d) alu[j].exec1.wakeupRs2(d);
-    end
+    for (Integer j=0; j < supSize; j = j + 1) begin
+      if (useLateIssue && execBuffer1.epoch == epoch[0]) begin
+        if (wakeupRs1Ex1[j] matches tagged Valid .d) alu[j].exec1.wakeupRs1(d);
+        if (wakeupRs2Ex1[j] matches tagged Valid .d) alu[j].exec1.wakeupRs2(d);
+      end
 
-    for (Integer j=0; j < supSize; j = j + 1)
-    if (useLateIssue && execBuffer.epoch != epoch[0]) begin
-      alu[j].exec1.wakeupRs1(?);
-      alu[j].exec1.wakeupRs2(?);
+      if (useLateIssue && execBuffer2.epoch == epoch[0]) begin
+        if (wakeupRs1Ex2[j] matches tagged Valid .d) alu[j].exec2.wakeupRs1(d);
+        if (wakeupRs2Ex2[j] matches tagged Valid .d) alu[j].exec2.wakeupRs2(d);
+      end
+
+      if (useLateIssue && execBuffer1.epoch != epoch[0]) begin
+        alu[j].exec1.wakeupRs1(?);
+        alu[j].exec1.wakeupRs2(?);
+      end
+
+      if (useLateIssue && execBuffer2.epoch != epoch[0]) begin
+        alu[j].exec2.wakeupRs1(?);
+        alu[j].exec2.wakeupRs2(?);
+      end
     end
   endrule
 
@@ -229,22 +269,21 @@ module mkCPU(CpuIfc);
   endrule
 
   ////////////////////////////////////////////////////////////////////////////
-  // Execution stage to write-back stage
+  // Execution stage 1 to execution stage 2
   ////////////////////////////////////////////////////////////////////////////
-  rule execRl if (execBuffer.mask != replicate(False));
+  rule execRl1 if (execBuffer1.mask != replicate(False));
     Bool stop = False;
     Bool useMem = False;
     Bool useSys = False;
     Super#(Bool) consumed = replicate(False);
 
-    for (Integer i=0; i < supSize; i = i + 1) if (!stop && execBuffer.mask[i]) begin
-      RvInstr instr = execBuffer.instr[i];
-      Bit#(32) uid = execBuffer.uid[i];
+    for (Integer i=0; i < supSize; i = i + 1) if (!stop && execBuffer1.mask[i]) begin
+      RvInstr instr = execBuffer1.instr[i];
+      Bit#(32) uid = execBuffer1.uid[i];
 
       Bool rdy = True;
       if (instr.isSystem && useSys) rdy = False;
       if (instr.isMemAccess && useMem) rdy = False;
-      if (instr.isSystem && !system.canEnter) rdy = False;
       if (instr.isMemAccess && !lsu.exec1.valid) rdy = False;
       if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec1.valid) rdy = False;
 
@@ -255,7 +294,7 @@ module mkCPU(CpuIfc);
           lsu.exec1.deq;
           useMem = True;
         end else if (instr.isSystem) begin
-          system.enter(csrExec2, Machine);
+          csrExec3 <= csrExec2;
           useSys = True;
         end else begin
           alu[i].exec1.deq;
@@ -263,21 +302,75 @@ module mkCPU(CpuIfc);
 
         consumed[i] = True;
         if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
-        if (logTrace) $fdisplay(trace_file, "E %d 0 Ex", uid);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 Ex1", uid);
+        if (logTrace) $fdisplay(trace_file, "S %d 0 Ex2", uid);
+      end
+    end
+
+    execBuffer1.consume(consumed);
+    execBuffer2.put(Bundle{
+      bprediction: execBuffer1.bprediction,
+      exception: execBuffer1.exception,
+      bstate: execBuffer1.bstate,
+      instr: execBuffer1.instr,
+      epoch: execBuffer1.epoch,
+      cause: execBuffer1.cause,
+      uid: execBuffer1.uid,
+      pc: execBuffer1.pc,
+      mask: consumed
+    });
+  endrule
+
+  ////////////////////////////////////////////////////////////////////////////
+  // Execution stage to commit stage
+  ////////////////////////////////////////////////////////////////////////////
+  rule execRl2 if (execBuffer2.mask != replicate(False));
+    Bool stop = False;
+    Bool useMem = False;
+    Bool useSys = False;
+    Super#(Bool) consumed = replicate(False);
+
+    for (Integer i=0; i < supSize; i = i + 1) if (!stop && execBuffer2.mask[i]) begin
+      RvInstr instr = execBuffer2.instr[i];
+      Bit#(32) uid = execBuffer2.uid[i];
+
+      Bool rdy = True;
+      if (instr.isSystem && useSys) rdy = False;
+      if (instr.isMemAccess && useMem) rdy = False;
+      if (instr.isSystem && !system.canEnter) rdy = False;
+      if (instr.isMemAccess && !lsu.exec2.valid) rdy = False;
+      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec2.valid) rdy = False;
+
+      if (!rdy) stop = True;
+
+      if (rdy) begin
+        if (instr.isMemAccess) begin
+          lsu.exec2.deq;
+          useMem = True;
+        end else if (instr.isSystem) begin
+          system.enter(csrExec3, Machine);
+          useSys = True;
+        end else begin
+          alu[i].exec2.deq;
+        end
+
+        consumed[i] = True;
+        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 Ex2", uid);
         if (logTrace) $fdisplay(trace_file, "S %d 0 C", uid);
       end
     end
 
-    execBuffer.consume(consumed);
+    execBuffer2.consume(consumed);
     commitBuffer.put(Bundle{
-      bprediction: execBuffer.bprediction,
-      exception: execBuffer.exception,
-      bstate: execBuffer.bstate,
-      instr: execBuffer.instr,
-      epoch: execBuffer.epoch,
-      cause: execBuffer.cause,
-      uid: execBuffer.uid,
-      pc: execBuffer.pc,
+      bprediction: execBuffer2.bprediction,
+      exception: execBuffer2.exception,
+      bstate: execBuffer2.bstate,
+      instr: execBuffer2.instr,
+      epoch: execBuffer2.epoch,
+      cause: execBuffer2.cause,
+      uid: execBuffer2.uid,
+      pc: execBuffer2.pc,
       mask: consumed
     });
   endrule
@@ -300,8 +393,8 @@ module mkCPU(CpuIfc);
       Bool rdy = True;
       if (instr.isSystem && useSys) rdy = False;
       if (instr.isMemAccess && useMem) rdy = False;
-      if (instr.isMemAccess && !lsu.exec3.valid) rdy = False;
-      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec3.valid) rdy = False;
+      if (instr.isMemAccess && !lsu.exec4.valid) rdy = False;
+      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec4.valid) rdy = False;
 
       if (!rdy) stop = True;
 
@@ -309,15 +402,15 @@ module mkCPU(CpuIfc);
         Bit#(32) result = ?;
 
         if (instr.isMemAccess) begin
-          result = lsu.exec3.result;
-          lsu.exec3.deq;
+          result = lsu.exec4.result;
+          lsu.exec4.deq;
           useMem = True;
         end else if (instr.isSystem) begin
-          result = csrExec3;
+          result = csrExec4;
           useSys = True;
         end else begin
-          result = alu[i].exec3.result;
-          alu[i].exec3.deq;
+          result = alu[i].exec4.result;
+          alu[i].exec4.deq;
         end
 
         if (debug && rd != 0) begin
@@ -354,13 +447,13 @@ module mkCPU(CpuIfc);
       if (instr.isSystem && useSys) rdy = False;
       if (instr.isMemAccess && useMem) rdy = False;
       if (instr.isSystem && !system.canDeq) rdy = False;
-      if (instr.isMemAccess && !lsu.exec2.valid) rdy = False;
-      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec2.valid) rdy = False;
+      if (instr.isMemAccess && !lsu.exec3.valid) rdy = False;
+      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec3.valid) rdy = False;
       if (!rdy) stop = True;
 
       if (rdy) begin
-        if (!instr.isMemAccess && !instr.isSystem) alu[i].exec2.deq(False);
-        if (instr.isMemAccess) lsu.exec2.deq(False);
+        if (!instr.isMemAccess && !instr.isSystem) alu[i].exec3.deq(False);
+        if (instr.isMemAccess) lsu.exec3.deq(False);
         if (instr.isSystem) system.deq(False);
         if (instr.isMemAccess) useMem = True;
         if (instr.isSystem) useSys = True;
@@ -408,20 +501,20 @@ module mkCPU(CpuIfc);
 
       let rdy = !(instr.isMemAccess && useMem);
 
-      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec2.valid) rdy = False;
-      if (instr.isMemAccess && !lsu.exec2.valid) rdy = False;
+      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec3.valid) rdy = False;
+      if (instr.isMemAccess && !lsu.exec3.valid) rdy = False;
       if (instr.isSystem && !system.canDeq) rdy = False;
       if (instr.isSystem && useSys) rdy = False;
       if (!rdy) stop = True;
 
-      let exception = alu[i].exec2.exception;
-      let nextPc = alu[i].exec2.nextPc;
-      let cause = alu[i].exec2.cause;
+      let exception = alu[i].exec3.exception;
+      let nextPc = alu[i].exec3.nextPc;
+      let cause = alu[i].exec3.cause;
 
       if (instr.isMemAccess) begin
-        exception = lsu.exec2.exception;
-        nextPc = lsu.exec2.nextPc;
-        cause = lsu.exec2.cause;
+        exception = lsu.exec3.exception;
+        nextPc = lsu.exec3.nextPc;
+        cause = lsu.exec3.cause;
       end
 
       if (instr.isSystem) begin
@@ -449,14 +542,14 @@ module mkCPU(CpuIfc);
         if (!exception && logTrace) $fdisplay(trace_file, "S %d 0 Wb", uid);
 
         if (instr.isMemAccess) begin
-          lsu.exec2.deq(!exception);
+          lsu.exec3.deq(!exception);
           useMem = True;
         end else if (instr.isSystem) begin
-          csrExec3 <= system.response.rd;
+          csrExec4 <= system.response.rd;
           system.deq(!exception);
           useSys = True;
         end else begin
-          alu[i].exec2.deq(!exception);
+          alu[i].exec3.deq(!exception);
         end
 
         currentPc = nextPc;
@@ -526,7 +619,6 @@ module mkCPU(CpuIfc);
       if (rs1 == 0) op1 = 0;
       if (rs2 == 0) op2 = 0;
 
-
       Bool rdy = True;
       Bool rdy1 = True;
       Bool rdy2 = True;
@@ -563,7 +655,7 @@ module mkCPU(CpuIfc);
         consumed[i] = True;
         if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
         if (logTrace) $fdisplay(trace_file, "E %d 0 Is", uid);
-        if (logTrace) $fdisplay(trace_file, "S %d 0 Ex", uid);
+        if (logTrace) $fdisplay(trace_file, "S %d 0 Ex1", uid);
         if (logTrace) $fdisplay(
           trace_file,
           "L %d 0 0x%h: ", uid, pc,
@@ -593,7 +685,7 @@ module mkCPU(CpuIfc);
     end
 
     dispatchBuffer.consume(consumed);
-    execBuffer.put(Bundle{
+    execBuffer1.put(Bundle{
       bprediction: dispatchBuffer.bprediction,
       exception: dispatchBuffer.exception,
       bstate: dispatchBuffer.bstate,

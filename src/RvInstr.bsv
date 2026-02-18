@@ -369,8 +369,6 @@ typedef enum {
   StoreAmoPageFault = 15
 } CauseException deriving(Bits);
 
-// To support late issue, an instruction must have no side effect like exception or control flow
-// indirection, it's program counter must also be correctly predicted
 function Bool supportLateIssue(Operation opcode);
   return case (opcode) matches
     Move:   True;
@@ -409,6 +407,7 @@ function Bool supportLateIssue(Operation opcode);
     Blt:    True;
     Bltu:   True;
     Bge:    True;
+    Bgeu:   True;
     default: False;
   endcase;
 endfunction
