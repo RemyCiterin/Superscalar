@@ -408,11 +408,11 @@ module mkBranchPredictor(BranchPred);
 
     numMis <= numMis + 1;
 
-    if (numMis[10:0] == 0) begin
-      $display(
-        "hit: %d mis: %d btb mis: %d",
-        numHit, numMis, numBtbMis
-      );
-    end
+    //if (numMis[10:0] == 0) begin
+    //  $display(
+    //    "hit: %d mis: %d btb mis: %d",
+    //    numHit, numMis, numBtbMis
+    //  );
+    //end
   endmethod
 endmodule

@@ -340,44 +340,6 @@ module mkCPU(CpuIfc);
 
   Reg#(Bit#(32)) commitPc <- mkReg('h80000000);
 
-  ////////////////////////////////////////////////////////////////////////////
-  // Flush the entries of the commit buffer in case of a misprediction/exception
-  ////////////////////////////////////////////////////////////////////////////
-  rule flush if (commitBuffer.mask != replicate(False) && commitBuffer.epoch != epoch[0]);
-    Bool stop = False;
-    Bool useMem = False;
-    Bool useSys = False;
-    Super#(Bool) consumed = replicate(False);
-
-    for (Integer i=0; i < supSize; i = i + 1) if (!stop && commitBuffer.mask[i]) begin
-      RvInstr instr = commitBuffer.instr[i];
-      Bit#(32) uid = commitBuffer.uid[i];
-
-      Bool rdy = True;
-      if (instr.isSystem && useSys) rdy = False;
-      if (instr.isMemAccess && useMem) rdy = False;
-      if (instr.isSystem && !system.canDeq) rdy = False;
-      if (instr.isMemAccess && !lsu.exec2.valid) rdy = False;
-      if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec2.valid) rdy = False;
-      if (!rdy) stop = True;
-
-      if (rdy) begin
-        if (!instr.isMemAccess && !instr.isSystem) alu[i].exec2.deq(False);
-        if (instr.isMemAccess) lsu.exec2.deq(False);
-        if (instr.isSystem) system.deq(False);
-        if (instr.isMemAccess) useMem = True;
-        if (instr.isSystem) useSys = True;
-        consumed[i] = True;
-
-        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
-        if (logTrace) $fdisplay(trace_file, "E %d 0 C", uid);
-        if (logTrace) $fdisplay(trace_file, "E %d 0 Ex", uid);
-      end
-    end
-
-    commitBuffer.consume(consumed);
-  endrule
-
   Reg#(Bit#(32)) forwardProgess <- mkReg(0);
 
   rule dead_lock if (forwardProgess >= 1000000);
@@ -389,9 +351,7 @@ module mkCPU(CpuIfc);
   // Send commit-buffer entries to the write-back stage, or redirect the pipeline
   // in case of an exception/misprediction
   ////////////////////////////////////////////////////////////////////////////
-  rule commit if (
-      commitBuffer.mask != replicate(False) && !redirectQ.canDeq && commitBuffer.epoch == epoch[0]
-    );
+  rule commit if ( commitBuffer.mask != replicate(False) && redirectQ.canEnq );
 
     Bool stop = False;
     Bool useMem = False;
@@ -401,6 +361,7 @@ module mkCPU(CpuIfc);
     Bit#(32) instrCounter = instret;
     Super#(Bool) consumed = replicate(False);
     Super#(Bool) commited = replicate(False);
+    Bool flush = commitBuffer.epoch != epoch[0];
 
     for (Integer i=0; i < supSize; i = i + 1) if (!stop && commitBuffer.mask[i]) begin
       RvInstr instr = commitBuffer.instr[i];
@@ -408,7 +369,7 @@ module mkCPU(CpuIfc);
       let pc = commitBuffer.pc[i];
       ArchReg rd = instr.rd;
 
-      dynamicAssert(pc == currentPc, "control flow error");
+      dynamicAssert(flush || pc == currentPc, "control flow error");
 
       let rdy = !(instr.isMemAccess && useMem);
 
@@ -441,54 +402,52 @@ module mkCPU(CpuIfc);
 
       if (rdy) begin
         consumed[i] = True;
-        commited[i] = !exception;
-        instrCounter = instrCounter + 1;
+        commited[i] = !exception && !flush;
+        if (!flush) instrCounter = instrCounter + 1;
 
         if (debug) $display(cycle, " commit 0x%h: ", pc, showRvInstr(instr));
 
         if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
         if (logTrace) $fdisplay(trace_file, "E %d 0 Ex", uid);
-        if (logTrace) $fdisplay(trace_file, "S %d 0 Wb", uid);
+        if (!exception && !flush && logTrace) $fdisplay(trace_file, "S %d 0 Wb", uid);
 
-        if (exception) $display(
+        if (exception && !flush) $display(
           "pc: %h cycle: %d instret: %d mis-pred: %d",
           pc, cycle, instret, fetch.numMisPred
         );
 
-        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
-        if (logTrace) $fdisplay(trace_file, "E %d 0 C", uid);
-        if (!exception && logTrace) $fdisplay(trace_file, "S %d 0 Wb", uid);
-
         if (instr.isMemAccess) begin
-          lsu.exec2.deq(!exception);
+          lsu.exec2.deq(!exception && !flush);
           useMem = True;
         end else if (instr.isSystem) begin
           csrExec3 <= system.response.rd;
-          system.deq(!exception);
+          system.deq(!exception && !flush);
           useSys = True;
         end else begin
-          alu[i].exec2.deq(!exception);
+          alu[i].exec2.deq(!exception && !flush);
         end
 
-        currentPc = nextPc;
+        if (!flush) currentPc = nextPc;
 
         // Misprediction: redirect pipeline
-        if (exception || nextPc != commitBuffer.bprediction[i]) begin
-          if (debug) $display("          redirect from 0x%h to 0x%h", pc, nextPc);
+        if (!flush) begin
+          if (exception || nextPc != commitBuffer.bprediction[i]) begin
+            if (debug) $display("          redirect from 0x%h to 0x%h", pc, nextPc);
 
-          redirectQ.enq(tuple3(
-            nextPc, epoch[0]+1,
-            BranchPredTrain{
-              instrs: Valid(commitBuffer.instr),
-              state: commitBuffer.bstate,
-              nextPc: nextPc,
-              pc: pc
-            }
-          ));
+            redirectQ.enq(tuple3(
+              nextPc, epoch[0]+1,
+              BranchPredTrain{
+                instrs: Valid(commitBuffer.instr),
+                state: commitBuffer.bstate,
+                nextPc: nextPc,
+                pc: pc
+              }
+            ));
 
-          epoch[0] <= epoch[0] + 1;
-          trainHit = False;
-          stop = True;
+            epoch[0] <= epoch[0] + 1;
+            trainHit = False;
+            flush = True;
+          end
         end
       end
     end

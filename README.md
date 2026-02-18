@@ -34,6 +34,7 @@ A superscalar RISC-V CPU implementing rv32-im supporting Tiny Coupled memories.
 - floating points, maybe look at how to to an FMA because the one from bluespec have a very high
     latency
 - `64` bits support
+- Improve critical path (as always)
 
 ## Performances
 

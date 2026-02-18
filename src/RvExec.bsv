@@ -218,8 +218,8 @@ module mkLsu(LsuIfc);
 
         cache.deq(commit);
         if (commit && request2.store && request2.address == 'h10000000 && mask[0] == 1) begin
-          $write("%c", data[7:0]);
-          //txUart.put(data[7:0]);
+          //$write("%c", data[7:0]);
+          txUart.put(data[7:0]);
           $fflush(stdout);
         end
       endmethod

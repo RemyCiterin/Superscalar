@@ -8,7 +8,6 @@ module top (
   output [7:0] led
 );
 
-
   mkSoc top (
     .CLK(CLK),
     .RST_N(RST_N),
