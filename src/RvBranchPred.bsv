@@ -3,6 +3,7 @@ import ConfigReg::*;
 import BRAMCore::*;
 import RvInstr::*;
 import RegFile::*;
+import Vector::*;
 
 // Each instruction that may update the control flow has an associated "instruction kind", this kind
 // is used to known the predictor to use to find the next program counter
@@ -66,6 +67,9 @@ typedef struct {
   Bool valid;
 } BtbEntry deriving(Bits, Eq);
 
+typedef 1 BtbWays;
+typedef Bit#(TLog#(BtbWays)) BtbWay;
+
 interface BranchTargetBuffer;
   /* Stage 1: read request */
   method Action lookup(Bit#(32) lane);
@@ -74,44 +78,75 @@ interface BranchTargetBuffer;
   (* always_ready *) method Bit#(32) predTarget;
   (* always_ready *) method InstrKind predKind;
   (* always_ready *) method Bit#(SupLogSize) predOffset;
+  (* always_ready *) method BtbWay predWay;
 
   /* Stage 3: update the state */
-  method Action update(Bit#(32) lane, Bit#(32) nextPc, InstrKind kind, Bit#(SupLogSize) offset);
+  method Action update
+    (BtbWay way, Bit#(32) lane, Bit#(32) nextPc, InstrKind kind, Bit#(SupLogSize) offset);
 endinterface
 
 (* synthesize *)
 module mkBranchTargetBuffer(BranchTargetBuffer);
-  BRAM_DUAL_PORT#(Tag, BtbEntry) entries <- mkBRAMCore2(2 ** valueOf(TagWidth), False);
+  Vector#(BtbWays, BRAM_DUAL_PORT#(Tag, BtbEntry))
+    entries <- replicateM(mkBRAMCore2(2 ** valueOf(TagWidth), False));
   Reg#(Bit#(32)) laneReg <- mkReg(?);
 
   Reg#(Tag) initIndex <- mkReg(0);
   Reg#(Bool) init <- mkReg(False);
 
   rule initRl if (!init);
-    entries.b.put(True, initIndex, BtbEntry{valid: False, lane: ?, nextPc: ?, kind: ?, offset: ?});
+    for (Integer i=0; i < valueof(BtbWays); i = i + 1) begin
+      entries[i].b.put(
+        True,
+        initIndex,
+        BtbEntry{
+          valid: False,
+          lane: ?,
+          nextPc: ?,
+          kind: ?,
+          offset: ?
+        }
+      );
+    end
     initIndex <= initIndex + 1;
     init <= initIndex + 1 == 0;
   endrule
 
-  Bool valid = laneReg == entries.a.read.lane && entries.a.read.valid;
+  Reg#(BtbWay) randomWay <- mkReg(0);
+
+  Bool valid = False;
+  BtbWay way = randomWay;
+  BtbEntry entry = entries[way].a.read;
+
+  for (Integer i=0; i < valueof(BtbWays); i = i + 1) begin
+    if (entries[i].a.read.valid && entries[i].a.read.lane == laneReg) begin
+      entry = entries[i].a.read;
+      way = fromInteger(i);
+      valid = True;
+    end
+  end
 
   method Action lookup(Bit#(32) lane) if (init);
-    entries.a.put(False, truncate(lane >> (2+supLogSize)), ?);
+    for (Integer i=0; i < valueof(BtbWays); i = i + 1) begin
+      entries[i].a.put(False, truncate(lane >> (2+supLogSize)), ?);
+    end
+
+    randomWay <= randomWay + 1;
     laneReg <= lane;
   endmethod
 
-  method predTarget = valid ? entries.a.read.nextPc : laneReg + fromInteger(4 * supSize);
-  method predOffset = valid ? entries.a.read.offset : maxBound;
-  method predKind = valid ? entries.a.read.kind : Linear;
+  method predTarget = valid ? entry.nextPc : laneReg + fromInteger(4 * supSize);
+  method predOffset = valid ? entry.offset : maxBound;
+  method predKind = valid ? entry.kind : Linear;
+  method predWay = way;
 
   method Action update
-    (Bit#(32) lane, Bit#(32) nextPc, InstrKind kind, Bit#(SupLogSize) offset) if (init);
-    if (nextPc != lane + fromInteger(4 * supSize))
-      entries.b.put(
-        True,
-        truncate(lane >> (2+supLogSize)),
-        BtbEntry{valid: True, lane: lane, nextPc: nextPc, kind: kind, offset: offset}
-      );
+    (BtbWay w, Bit#(32) lane, Bit#(32) nextPc, InstrKind kind, Bit#(SupLogSize) offset) if (init);
+    entries[w].b.put(
+      True,
+      truncate(lane >> (2+supLogSize)),
+      BtbEntry{valid: True, lane: lane, nextPc: nextPc, kind: kind, offset: offset}
+    );
   endmethod
 endmodule
 
@@ -240,6 +275,8 @@ typedef struct {
   InstrKind kind;
   StackIndex top;
   GhtState state;
+  BtbWay way;
+  Bit#(32) pred;
 } BranchPredState deriving(Bits, FShow);
 
 typedef struct {
@@ -268,6 +305,7 @@ module mkBranchPredictor(BranchPred);
 
   Reg#(Bit#(32)) numHit <- mkConfigReg(0);
   Reg#(Bit#(32)) numMis <- mkConfigReg(0);
+  Reg#(Bit#(32)) numBtbMis <- mkConfigReg(0);
 
   Reg#(History) history[2] <- mkCReg(2, 0);
 
@@ -311,7 +349,9 @@ module mkBranchPredictor(BranchPred);
       taken ? targetPc : lane + fromInteger(4 * supSize),
       taken ? branchOffset : maxBound,
       BranchPredState {
+        pred: targetPc,
         top: ras.topOfStack,
+        way: btb.predWay,
         state: ght.state,
         ghr: history[0],
         kind: kind
@@ -352,12 +392,14 @@ module mkBranchPredictor(BranchPred);
       infos.nextPc != lane + fromInteger(4*supSize) &&
       (baseNextPc != lane || offset >= nextOffset);
 
-    if (kind == Branch) ght.update(lane, ghr, taken, infos.state.state);
+    if (kind == Branch)
+      ght.update(lane, ghr, taken, infos.state.state);
 
     History newGhr = {truncate(ghr), taken ? 1'b1 : 1'b0};
 
     if (infos.instrs matches tagged Valid .*) begin
-      btb.update(lane, infos.nextPc, kind, offset);
+      if (taken && infos.nextPc != infos.state.pred) numBtbMis <= numBtbMis + 1;
+      if (taken) btb.update(infos.state.way, lane, infos.nextPc, kind, offset);
       history[0] <= kind == Branch ? newGhr : ghr;
       ras.backtrack(infos.state.top, kind);
     end else begin
@@ -365,5 +407,12 @@ module mkBranchPredictor(BranchPred);
     end
 
     numMis <= numMis + 1;
+
+    if (numMis[10:0] == 0) begin
+      $display(
+        "hit: %d mis: %d btb mis: %d",
+        numHit, numMis, numBtbMis
+      );
+    end
   endmethod
 endmodule
