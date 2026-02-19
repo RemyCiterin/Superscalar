@@ -130,17 +130,22 @@ module mkICache#(Bit#(sourceW) source) (ICache#(sizeW, sourceW));
 
     if (offset + 1 == 0) begin
       tagRams[way].writePorts[0].request(physical.index, Valid(physical.tag));
-      tags[way] <= Valid(physical.tag);
-
-      for (Integer i=0; i < ways; i = i + 1) begin
-        for (Integer j=0; j < supSize; j = j + 1) begin
-          dataRams[i][j].read({ physical.index, physical.offset });
-        end
-      end
 
       //$display("finish refill");
-      state[0] <= Lookup;
+      state[0] <= Redo;
     end
+  endrule
+
+  rule redo if (state[0] == Redo);
+    tags[way] <= Valid(physical.tag);
+
+    for (Integer i=0; i < ways; i = i + 1) begin
+      for (Integer j=0; j < supSize; j = j + 1) begin
+        dataRams[i][j].read({ physical.index, physical.offset });
+      end
+    end
+
+    state[0] <= Lookup;
   endrule
 
   ////////////////////////////////////////////////////////////////////////////
