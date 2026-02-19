@@ -84,7 +84,8 @@ module mkCPU(CpuIfc);
   ////////////////////////////////////////////////////////////////////////////
   // Pipeline front-end
   ////////////////////////////////////////////////////////////////////////////
-  Fifo#(2, Tuple3#(Bit#(32), Epoch, BranchPredTrain)) redirectQ <- mkFifo;
+  Reg#(Tuple3#(Bit#(32), Epoch, BranchPredTrain)) redirectData <- mkRegU;
+  Reg#(Bool) redirectState <- mkReg(False);
   FetchIfc fetch <- mkFetch;
   DecodeIfc decode <- mkDecode;
 
@@ -196,11 +197,11 @@ module mkCPU(CpuIfc);
   ////////////////////////////////////////////////////////////////////////////
   // Redirect the fetch stage to a new program counter
   ////////////////////////////////////////////////////////////////////////////
-  rule redirect;
-    match {.pc, .epoch, .train} = redirectQ.first;
+  rule redirect if (redirectState);
+    match {.pc, .epoch, .train} = redirectData;
     fetch.redirect(pc, epoch);
+    redirectState <= False;
     fetch.trainMis(train);
-    redirectQ.deq;
   endrule
 
   ////////////////////////////////////////////////////////////////////////////
@@ -351,7 +352,7 @@ module mkCPU(CpuIfc);
   // Send commit-buffer entries to the write-back stage, or redirect the pipeline
   // in case of an exception/misprediction
   ////////////////////////////////////////////////////////////////////////////
-  rule commit if ( commitBuffer.mask != replicate(False) && redirectQ.canEnq );
+  rule commit if ( commitBuffer.mask != replicate(False) && !redirectState );
 
     Bool stop = False;
     Bool useMem = False;
@@ -434,7 +435,8 @@ module mkCPU(CpuIfc);
           if (exception || nextPc != commitBuffer.bprediction[i]) begin
             if (debug) $display("          redirect from 0x%h to 0x%h", pc, nextPc);
 
-            redirectQ.enq(tuple3(
+            redirectState <= True;
+            redirectData <= tuple3(
               nextPc, epoch[0]+1,
               BranchPredTrain{
                 instrs: Valid(commitBuffer.instr),
@@ -442,7 +444,7 @@ module mkCPU(CpuIfc);
                 nextPc: nextPc,
                 pc: pc
               }
-            ));
+            );
 
             epoch[0] <= epoch[0] + 1;
             trainHit = False;
@@ -467,9 +469,6 @@ module mkCPU(CpuIfc);
     instret <= instrCounter;
     commitPc <= currentPc;
   endrule
-
-  Reg#(Bit#(32)) stalled1 <- mkReg(0);
-  Reg#(Bit#(32)) stalled2 <- mkReg(0);
 
   ////////////////////////////////////////////////////////////////////////////
   // Enter new instruction to the pipeline, also detect read-after-write hazard
