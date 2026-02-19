@@ -159,24 +159,10 @@ module mkLsu(LsuIfc);
 
   DCache#(8, 8) cache <- mkDCache(0);
 
-  Fifo#(1, LsuRequest) buffer <- mkBypassFifo;
   Reg#(CauseException) cause2 <- mkRegU;
   Reg#(LsuRequest) request2 <- mkRegU;
   Reg#(Bool) exception2 <- mkRegU;
   Reg#(Bit#(32)) pc2 <- mkRegU;
-
-  rule enq_stage2;
-    cache.lookup(DCacheReq{
-      opcode: buffer.first.store ? St : Ld,
-      mask: lsuRequestMask(buffer.first),
-      data: lsuRequestData(buffer.first),
-      address: buffer.first.address,
-      amo: ?
-    });
-
-    request2 <= buffer.first;
-    buffer.deq;
-  endrule
 
   interface ExecIfc exec;
     method canEnter = !valid1[1];
@@ -190,14 +176,24 @@ module mkLsu(LsuIfc);
       method wakeupRs1(_) = noAction;
       method wakeupRs2(_) = noAction;
       method forward = Invalid;
-      method valid = valid1[0] && buffer.canEnq;
+      method valid = valid1[0] && cache.canLookup;
 
-      method Action deq if (valid1[0] && buffer.canEnq);
+      method Action deq if (valid1[0] && cache.canLookup);
         cause2 <= request1.instr.opcode == Load ? LoadAddressMisaligned : StoreAmoAddressMisaligned;
         exception2 <= !lsuRequestAligned(getLsuRequest(request1));
-        buffer.enq(getLsuRequest(request1));
         valid1[0] <= False;
         pc2 <= pc1;
+
+        let req = getLsuRequest(request1);
+        cache.lookup(DCacheReq{
+          opcode: req.store ? St : Ld,
+          mask: lsuRequestMask(req),
+          data: lsuRequestData(req),
+          address: req.address,
+          amo: ?
+        });
+
+        request2 <= req;
       endmethod
     endinterface
 
