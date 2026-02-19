@@ -9,38 +9,6 @@ import Vector :: *;
 import Assert :: *;
 import Fifo :: *;
 
-interface InstructionMemory;
-  method Action request(Bit#(32) address);
-
-  (* always_ready *) method Bool valid;
-  (* always_ready *) method Bool exception;
-  (* always_ready *) method Super#(Bit#(32)) data;
-  (* always_ready *) method CauseException cause;
-endinterface
-
-module mkInstructionMemoryTCM#(Integer minAddr, Integer maxAddr, String name) (InstructionMemory);
-  BRAM_PORT#(Bit#(32), Bit#(TMul#(SupSize, 32))) bram <-
-    mkBRAMCore1Load(1 + (maxAddr - minAddr) / (supSize * 4), False, name, False);
-  Reg#(Bool) validReg <- mkReg(False);
-  Reg#(Bit#(32)) addr <- mkReg(?);
-
-  method Action request(Bit#(32) address);
-    bram.put(False, (address - fromInteger(minAddr)) >> (2 + fromInteger(supLogSize)), ?);
-    validReg <= True;
-    addr <= address;
-  endmethod
-
-  method Bool valid = validReg;
-
-  method Bool exception =
-    fromInteger(minAddr) > addr || addr > fromInteger(maxAddr) || addr[1:0] != 0;
-
-  method Super#(Bit#(32)) data = unpack(bram.read);
-
-  method CauseException cause =
-    addr[1:0] != 0 ? InstructionAddressMisaligned : InstructionAccessFault;
-endmodule
-
 typedef struct {
   Super#(Bool) mask;
   Super#(Bit#(32)) uid;
@@ -72,14 +40,6 @@ module mkFetch(FetchIfc);
   Reg#(Bit#(32)) uid <- mkReg(0);
 
   Bool bpredEnabled = True;
-
-  String fileName = case (supLogSize) matches
-    0 : "Mem32.hex";
-    1 : "Mem64.hex";
-    2 : "Mem128.hex";
-    3 : "Mem256.hex";
-    default : "";
-  endcase;
 
   ICache#(8, 8) icache <- mkICache(0);
 
