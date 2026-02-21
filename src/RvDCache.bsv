@@ -1,5 +1,6 @@
 import MultiRegFile :: *;
 import ForwardBRAM :: *;
+import ConfigReg :: *;
 import RegFile :: *;
 import TLTypes :: *;
 import TLUtils :: *;
@@ -7,12 +8,18 @@ import Vector :: *;
 import Fifo :: *;
 
 export DCacheOpcode(..);
+export DCacheStats(..);
 export DCacheAmo(..);
 export DCacheReq(..);
 export DCache(..);
 export mkDCache;
 
 `include "TL.defines"
+
+typedef struct {
+  Bit#(32) hit;
+  Bit#(32) mis;
+} DCacheStats deriving(Bits);
 
 typedef enum {
   Ld,
@@ -72,6 +79,8 @@ interface DCache#(numeric type sizeW, numeric type sourceW);
   method Action deq(Bool commit);
 
   interface TLMaster#(32, 32, sizeW, sourceW, 0) master;
+
+  (* always_ready *) method DCacheStats stats;
 endinterface
 
 typedef 4 NumWays;
@@ -107,6 +116,9 @@ typedef enum {
 module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW));
   Fifo#(2, ChannelA#(32, 32, sizeW, sourceW, 0)) queueA <- mkFifo;
   Fifo#(2, ChannelD#(32, 32, sizeW, sourceW, 0)) queueD <- mkFifo;
+
+  Reg#(Bit#(32)) numHit <- mkConfigReg(0);
+  Reg#(Bit#(32)) numMis <- mkConfigReg(0);
 
   Vector#(NumWays, MultiRF#(1, 1, Index, Maybe#(Tag)))
     tagRams <- replicateM(mkForwardMultiRF(0, fromInteger(2 ** valueof(IndexW) - 1)));
@@ -275,6 +287,9 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW));
       end
     end
 
+    if (found) numHit <= numHit + 1;
+    else numMis <= numMis + 1;
+
     way <= w;
     hit <= found;
     currentTag <= tags[w];
@@ -293,5 +308,10 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW));
     interface channelD = toFifoI(queueD);
     interface channelE = nullFifoO;
   endinterface
+
+  method stats = DCacheStats{
+    hit: numHit,
+    mis: numMis
+  };
 endmodule
 

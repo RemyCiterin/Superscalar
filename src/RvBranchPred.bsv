@@ -50,9 +50,9 @@ function InstrKind instrKindOpt(Maybe#(Super#(RvInstr)) opt);
   return ret;
 endfunction
 
-typedef 10 TagWidth;
-typedef TagWidth HistorySize;
-typedef 3 StackLogSize;
+typedef 9 TagWidth;
+typedef 64 HistorySize;
+typedef 4 StackLogSize;
 
 typedef Bit#(TagWidth) Tag;
 typedef Bit#(HistorySize) History;
@@ -194,43 +194,35 @@ module mkReturnAddressStack(ReturnAddressStack);
 endmodule
 
 typedef struct {
-  Int#(3) base;
-  Int#(3) pred;
-  Bool found;
-} GhtState deriving(Bits, FShow, Eq);
+  Int#(2) pred;
+} PhtState deriving(Bits, FShow, Eq);
 
-interface GlobalHistoryTable;
+interface PatternHistoryTable;
   method Action lookup(Bit#(32) lane, History h);
 
   (* always_ready *) method Bool prediction;
-  (* always_ready *) method GhtState state;
+  (* always_ready *) method PhtState state;
 
-  method Action update(Bit#(32) lane, History h, Bool taken, GhtState st);
+  method Action update(Bit#(32) lane, History h, Bool taken, PhtState st);
 endinterface
 
-typedef struct {
-  Maybe#(Tag) tag;
-  Int#(3) value;
-} TaggedEntry deriving(Bits, FShow, Eq);
-
-instance DefaultValue#(TaggedEntry);
-  function TaggedEntry defaultValue = TaggedEntry{
-    tag: Invalid,
-    value: 0
-  };
-endinstance
+typedef 14 PatternSize;
+typedef Bit#(PatternSize) Pattern;
 
 (* synthesize *)
-module mkGlobalHistoryTable(GlobalHistoryTable);
-  BRAM_DUAL_PORT#(Tag, Int#(3)) baseRam <- mkBRAMCore2(2 ** valueOf(TagWidth), False);
-  BRAM_DUAL_PORT#(Tag, TaggedEntry) predRam <- mkBRAMCore2(2 ** valueOf(TagWidth), False);
+module mkPatternHistoryTable(PatternHistoryTable);
+  BRAM_DUAL_PORT#(Pattern, Int#(2)) predRam <- mkBRAMCore2(2 ** valueof(PatternSize), False);
 
-  Reg#(Tag) initIndex <- mkReg(0);
+  function Pattern computeHash(Bit#(32) lane, History h);
+    Pattern hash = truncate(lane >> (2+supLogSize));
+    return hash ^ truncate(h);
+  endfunction
+
+  Reg#(Pattern) initIndex <- mkReg(0);
   Reg#(Bool) init <- mkReg(False);
 
   rule initRl if (!init);
-    baseRam.b.put(True, initIndex, 0);
-    predRam.b.put(True, initIndex, defaultValue);
+    predRam.b.put(True, initIndex, 0);
     initIndex <= initIndex + 1;
     init <= initIndex + 1 == 0;
   endrule
@@ -238,35 +230,24 @@ module mkGlobalHistoryTable(GlobalHistoryTable);
   Reg#(Bit#(32)) laneReg <- mkRegU;
   Reg#(History) histReg <- mkRegU;
 
-  Bool valid = predRam.a.read.tag == Valid(truncate(laneReg >> (2+supLogSize)));
-
   method Action lookup(Bit#(32) lane, History h) if (init);
-    baseRam.a.put(False, truncate(lane >> (2+supLogSize)), ?);
-    predRam.a.put(False, truncate(lane >> (2+supLogSize)) ^ truncate(h), ?);
+    predRam.a.put(False, computeHash(lane, h), ?);
     laneReg <= lane;
     histReg <= h;
   endmethod
 
-  method Bool prediction = (valid ? predRam.a.read.value : baseRam.a.read) >= 0;
+  method Bool prediction = predRam.a.read >= 0;
 
   method state;
-    return GhtState {
-      pred: predRam.a.read.value,
-      base: baseRam.a.read,
-      found: valid
+    return PhtState {
+      pred: predRam.a.read
     };
   endmethod
 
-  method Action update(Bit#(32) lane, History h, Bool taken, GhtState st) if (init);
-    let base = satPlus(Sat_Bound, st.base, taken ? 1 : -1);
+  method Action update(Bit#(32) lane, History h, Bool taken, PhtState st) if (init);
     let pred = satPlus(Sat_Bound, st.pred, taken ? 1 : -1);
-    pred = st.found ? pred : (taken ? 0 : -1);
-
-    Tag tag = truncate(lane >> (2+supLogSize));
-    Tag hash = tag ^ truncate(h);
-
-    predRam.b.put(True, hash, TaggedEntry{tag: Valid(tag), value: pred});
-    baseRam.b.put(True, tag, base);
+    Pattern hash = computeHash(lane, h);
+    predRam.b.put(True, hash, pred);
   endmethod
 endmodule
 
@@ -274,7 +255,7 @@ typedef struct {
   History ghr;
   InstrKind kind;
   StackIndex top;
-  GhtState state;
+  PhtState state;
   BtbWay way;
   Bit#(32) pred;
 } BranchPredState deriving(Bits, FShow);
@@ -284,6 +265,7 @@ typedef struct {
   Bit#(32) nextPc;
   Maybe#(Super#(RvInstr)) instrs;
   BranchPredState state;
+  Super#(Bool) mask;
 } BranchPredTrain deriving(Bits, FShow);
 
 interface BranchPred;
@@ -300,7 +282,7 @@ endinterface
 (* synthesize *)
 module mkBranchPredictor(BranchPred);
   let btb <- mkBranchTargetBuffer;
-  let ght <- mkGlobalHistoryTable;
+  let pht <- mkPatternHistoryTable;
   let ras <- mkReturnAddressStack;
 
   Reg#(Bit#(32)) numHit <- mkConfigReg(0);
@@ -317,7 +299,7 @@ module mkBranchPredictor(BranchPred);
   method numMisPred = numMis;
 
   method Action lookup(Bit#(32) pc);
-    ght.lookup(pc & laneMask, history[1]);
+    pht.lookup(pc & laneMask, history[1]);
     btb.lookup(pc & laneMask);
     pcReg <= pc;
   endmethod
@@ -337,7 +319,7 @@ module mkBranchPredictor(BranchPred);
       kind = Linear;
     end
 
-    let taken = ght.prediction || kind != Branch;
+    let taken = pht.prediction || kind != Branch;
 
     let returnPc <- ras.pred(lane + zeroExtend(btb.predOffset) * 4, kind);
     if (returnPc matches tagged Valid .newPc) targetPc = newPc;
@@ -352,7 +334,7 @@ module mkBranchPredictor(BranchPred);
         pred: targetPc,
         top: ras.topOfStack,
         way: btb.predWay,
-        state: ght.state,
+        state: pht.state,
         ghr: history[0],
         kind: kind
       }
@@ -374,7 +356,7 @@ module mkBranchPredictor(BranchPred);
       infos.nextPc != lane + fromInteger(4*supSize) &&
       (no_jump);
 
-    if (kind == Branch && no_jump) ght.update(lane, ghr, taken, infos.state.state);
+    if (kind == Branch && no_jump) pht.update(lane, ghr, taken, infos.state.state);
 
     numHit <= numHit + 1;
   endmethod
@@ -393,7 +375,7 @@ module mkBranchPredictor(BranchPred);
       (baseNextPc != lane || offset >= nextOffset);
 
     if (kind == Branch)
-      ght.update(lane, ghr, taken, infos.state.state);
+      pht.update(lane, ghr, taken, infos.state.state);
 
     History newGhr = {truncate(ghr), taken ? 1'b1 : 1'b0};
 

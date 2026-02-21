@@ -5,6 +5,7 @@ import BuildVector :: *;
 import ConfigReg :: *;
 import BRAMCore :: *;
 import RvDCache :: *;
+import RvICache :: *;
 import RegFile :: *;
 import RvInstr :: *;
 import RvFetch :: *;
@@ -78,7 +79,7 @@ module mkCPU(CpuIfc);
   // Epoch: eviry instruction with an epoch different than the current counter
   // must be flush
   ////////////////////////////////////////////////////////////////////////////
-  Reg#(Epoch) epoch[2] <- mkCReg(2, 0);
+  Reg#(Epoch) epoch <- mkConfigReg(0);
 
 
   ////////////////////////////////////////////////////////////////////////////
@@ -145,7 +146,7 @@ module mkCPU(CpuIfc);
 
     // Stage 2
     for (Integer i=0; i < supSize; i = i + 1)
-    if (commitBuffer.mask[i] && commitBuffer.epoch == epoch[0]) begin
+    if (commitBuffer.mask[i] && commitBuffer.epoch == epoch) begin
       RvInstr instr = commitBuffer.instr[i];
       Maybe#(Bit#(32)) result = ?;
       ArchReg rd = instr.rd;
@@ -164,7 +165,7 @@ module mkCPU(CpuIfc);
 
     // Stage 1
     for (Integer i=0; i < supSize; i = i + 1)
-    if (execBuffer.mask[i] && execBuffer.epoch == epoch[0]) begin
+    if (execBuffer.mask[i] && execBuffer.epoch == epoch) begin
       RvInstr instr = execBuffer.instr[i];
       Maybe#(Bit#(32)) result = ?;
       ArchReg rd = instr.rd;
@@ -182,13 +183,13 @@ module mkCPU(CpuIfc);
     end
 
     for (Integer j=0; j < supSize; j = j + 1)
-    if (useLateIssue && execBuffer.epoch == epoch[0]) begin
+    if (useLateIssue && execBuffer.epoch == epoch) begin
       if (wakeupRs1Ex1[j] matches tagged Valid .d) alu[j].exec1.wakeupRs1(d);
       if (wakeupRs2Ex1[j] matches tagged Valid .d) alu[j].exec1.wakeupRs2(d);
     end
 
     for (Integer j=0; j < supSize; j = j + 1)
-    if (useLateIssue && execBuffer.epoch != epoch[0]) begin
+    if (useLateIssue && execBuffer.epoch != epoch) begin
       alu[j].exec1.wakeupRs1(?);
       alu[j].exec1.wakeupRs2(?);
     end
@@ -330,9 +331,6 @@ module mkCPU(CpuIfc);
 
         if (rd != 0) regFile.writePorts[i].request(rd, result);
         consumed[i] = True;
-
-        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
-        if (logTrace) $fdisplay(trace_file, "E %d 0 Wb", uid);
       end
     end
 
@@ -362,7 +360,7 @@ module mkCPU(CpuIfc);
     Bit#(32) instrCounter = instret;
     Super#(Bool) consumed = replicate(False);
     Super#(Bool) commited = replicate(False);
-    Bool flush = commitBuffer.epoch != epoch[0];
+    Bool flush = commitBuffer.epoch != epoch;
 
     for (Integer i=0; i < supSize; i = i + 1) if (!stop && commitBuffer.mask[i]) begin
       RvInstr instr = commitBuffer.instr[i];
@@ -406,16 +404,25 @@ module mkCPU(CpuIfc);
         commited[i] = !exception && !flush;
         if (!flush) instrCounter = instrCounter + 1;
 
-        if (debug) $display(cycle, " commit 0x%h: ", pc, showRvInstr(instr));
+        if (debug) begin
+          $write(cycle, " commit 0x%h: ", pc);
+          displayRvInstr(instr); $display("");
+        end
 
         if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
-        if (logTrace) $fdisplay(trace_file, "E %d 0 Ex", uid);
+        if (logTrace) $fdisplay(trace_file, "E %d 0 C", uid);
         if (!exception && !flush && logTrace) $fdisplay(trace_file, "S %d 0 Wb", uid);
 
-        if (exception && !flush) $display(
-          "pc: %h cycle: %d instret: %d mis-pred: %d",
-          pc, cycle, instret, fetch.numMisPred
-        );
+        if (exception && !flush) begin
+          $display(
+            "pc: %h cycle: %d instret: %d mis-pred: %d",
+            pc, cycle, instret, fetch.numMisPred
+          );
+          $display(
+            "  i-hit: %d i-mis: %d d-hit: %d d-mis: %d",
+            fetch.stats.hit, fetch.stats.mis, lsu_ifc.stats.hit, lsu_ifc.stats.mis
+          );
+        end
 
         if (instr.isMemAccess) begin
           lsu.exec2.deq(!exception && !flush);
@@ -437,16 +444,17 @@ module mkCPU(CpuIfc);
 
             redirectState <= True;
             redirectData <= tuple3(
-              nextPc, epoch[0]+1,
+              nextPc, epoch+1,
               BranchPredTrain{
                 instrs: Valid(commitBuffer.instr),
                 state: commitBuffer.bstate,
                 nextPc: nextPc,
+                mask: consumed,
                 pc: pc
               }
             );
 
-            epoch[0] <= epoch[0] + 1;
+            epoch <= epoch + 1;
             trainHit = False;
             flush = True;
           end
@@ -459,6 +467,7 @@ module mkCPU(CpuIfc);
         instrs: Valid(commitBuffer.instr),
         state: commitBuffer.bstate,
         nextPc: currentPc,
+        mask: consumed,
         pc: commitPc
       });
     end
@@ -474,7 +483,18 @@ module mkCPU(CpuIfc);
   // Enter new instruction to the pipeline, also detect read-after-write hazard
   // and forward operands using the values in the scoreboard
   ////////////////////////////////////////////////////////////////////////////
-  rule dispatch if (dispatchBuffer.mask != replicate(False));
+  rule flush_dispatch if (dispatchBuffer.mask != replicate(False) && dispatchBuffer.epoch != epoch);
+    dispatchBuffer.consume(dispatchBuffer.mask);
+
+    for (Integer i=0; i < supSize; i = i + 1) if (dispatchBuffer.mask[i]) begin
+      Bit#(32) uid = dispatchBuffer.uid[i];
+
+      if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
+      if (logTrace) $fdisplay(trace_file, "E %d 0 Is", uid);
+    end
+  endrule
+
+  rule dispatch if (dispatchBuffer.mask != replicate(False) && dispatchBuffer.epoch == epoch);
     Bool stop = False;
     Bool useMem = False;
     Bool useSys = False;
@@ -530,18 +550,6 @@ module mkCPU(CpuIfc);
 
       if (rdy) begin
         consumed[i] = True;
-        if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
-        if (logTrace) $fdisplay(trace_file, "E %d 0 Is", uid);
-        if (logTrace) $fdisplay(trace_file, "S %d 0 Ex", uid);
-        if (logTrace) $fdisplay(
-          trace_file,
-          "L %d 0 0x%h: ", uid, pc,
-          " ", fshow(instr.opcode),
-          " ", showReg(rd),
-          " ", showReg(rs1),
-          " ", showReg(rs2)
-        );
-
         if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
         if (logTrace) $fdisplay(trace_file, "E %d 0 Is", uid);
         if (logTrace) $fdisplay(trace_file, "S %d 0 Ex", uid);

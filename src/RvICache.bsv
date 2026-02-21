@@ -1,5 +1,6 @@
 import MultiRegFile :: *;
 import ForwardBRAM :: *;
+import ConfigReg :: *;
 import RegFile :: *;
 import TLTypes :: *;
 import TLUtils :: *;
@@ -7,10 +8,16 @@ import RvInstr :: *;
 import Vector :: *;
 import Fifo :: *;
 
+export ICacheStats(..);
 export ICache(..);
 export mkICache;
 
 `include "TL.defines"
+
+typedef struct {
+  Bit#(32) hit;
+  Bit#(32) mis;
+} ICacheStats deriving(Bits);
 
 interface ICache#(numeric type sizeW, numeric type sourceW);
   (* always_ready *) method Bool canLookup;
@@ -22,6 +29,8 @@ interface ICache#(numeric type sizeW, numeric type sourceW);
   method Action deq;
 
   interface TLMaster#(32, 32, sizeW, sourceW, 0) master;
+
+  (* always_ready *) method ICacheStats stats;
 endinterface
 
 typedef 4 NumWays;
@@ -55,6 +64,9 @@ typedef enum {
 module mkICache#(Bit#(sourceW) source) (ICache#(sizeW, sourceW));
   Fifo#(2, ChannelA#(32, 32, sizeW, sourceW, 0)) queueA <- mkFifo;
   Fifo#(2, ChannelD#(32, 32, sizeW, sourceW, 0)) queueD <- mkFifo;
+
+  Reg#(Bit#(32)) numReq <- mkConfigReg(0);
+  Reg#(Bit#(32)) numMis <- mkConfigReg(0);
 
   Vector#(NumWays, MultiRF#(1, 1, Index, Maybe#(Tag)))
     tagRams <- replicateM(mkForwardMultiRF(0, fromInteger(2 ** valueof(IndexW) - 1)));
@@ -106,6 +118,7 @@ module mkICache#(Bit#(sourceW) source) (ICache#(sizeW, sourceW));
   rule mis if (state[0] == Lookup && !hit && queueA.canEnq);
     offset <= 0;
     state[0] <= Refill;
+    numMis <= numMis + 1;
     queueA.enq(ChannelA{
       address: pack(Physical{ tag: physical.tag, index: physical.index, offset: 0, lsb: 0 }),
       size: fromInteger(lineSize),
@@ -173,6 +186,7 @@ module mkICache#(Bit#(sourceW) source) (ICache#(sizeW, sourceW));
   method Action lookup(Bit#(32) address) if (state[1] == Idle);
     Physical phys = unpack(address);
     randomWay <= randomWay + 1;
+    numReq <= numReq + 1;
 
     for (Integer i=0; i < ways; i = i + 1) begin
       for (Integer j=0; j < supSize; j = j + 1) begin
@@ -197,5 +211,10 @@ module mkICache#(Bit#(sourceW) source) (ICache#(sizeW, sourceW));
     interface channelD = toFifoI(queueD);
     interface channelE = nullFifoO;
   endinterface
+
+  method stats = ICacheStats{
+    hit: numReq - numMis,
+    mis: numMis
+  };
 endmodule
 

@@ -141,6 +141,8 @@ interface LsuIfc;
   (* always_ready, always_enabled *)
   method Bit#(1) transmit;
 
+  (* always_ready *) method DCacheStats stats;
+
   interface TLMaster#(32, 32, 8, 8, 0) master;
 endinterface
 
@@ -234,4 +236,6 @@ module mkLsu(LsuIfc);
   interface master = cache.master;
 
   method transmit = txUart.transmit;
+
+  method stats = cache.stats;
 endmodule

@@ -23,8 +23,8 @@ Bit#(32) nop = 32'h00000013;
 
 typedef enum {
   // I
-  Move,
   Err,
+  Move,
   Lui,
   Auipc,
   Add,
@@ -274,73 +274,96 @@ function Fmt showReg(ArchReg arch);
   return $format(integers[arch]);
 endfunction
 
-function Fmt showRvInstr(RvInstr instr);
-  let ui = $format((UInt#(32))'(unpack(instr.imm)));
-  let si = $format((Int#(32))'(unpack(instr.imm)));
-  let sxi =
-    instr.imm[31] == 0 ?
-    $format("0x%h", instr.imm) :
-    $format("-0x%h", -instr.imm);
-  let xi = $format("0x%h", instr.imm);
-  let rs1 = showReg(instr.rs1);
-  let rs2 = showReg(instr.rs2);
-  let rd = showReg(instr.rd);
+function Action displayRvInstr(RvInstr instr);
+  action
+    let ui = $format((UInt#(32))'(unpack(instr.imm)));
+    let si = $format((Int#(32))'(unpack(instr.imm)));
+    let sxi =
+      instr.imm[31] == 0 ?
+      $format("0x%h", instr.imm) :
+      $format("-0x%h", -instr.imm);
+    let xi = $format("0x%h", instr.imm);
+    let rs1 = showReg(instr.rs1);
+    let rs2 = showReg(instr.rs2);
+    let rd = showReg(instr.rd);
 
-  let showOp =
-    instr.immValid ?
-    $format("i ", rd, ", ", rs1, ", ", si) :
-    $format(" ", rd, ", ", rs1, ", ", rs2);
+    Bool showOp = False;
 
-  return case (instr.opcode) matches
-    Err : $format("err");
-    Lui : $format("lui ", rd, ", ", xi);
-    Auipc : $format("auipc ", rd, ", ", sxi);
-    Add : $format("add", showOp);
-    Slt : $format("slt", showOp);
-    Sltu : $format("sltu", showOp);
-    And : $format("and", showOp);
-    Sh1add : $format("sh1add", showOp);
-    Sh2add : $format("sh2add", showOp);
-    Sh3add : $format("sh3add", showOp);
-    Mul : $format("mul", showOp);
-    Mulh : $format("mulh", showOp);
-    Mulhu : $format("mulhu", showOp);
-    Mulhsu : $format("mulhsu", showOp);
-    Div : $format("div", showOp);
-    Divu : $format("divu", showOp);
-    Rem : $format("rem", showOp);
-    Remu : $format("remu", showOp);
-    Or : $format("or", showOp);
-    Xor : $format("xor", showOp);
-    Sll : $format("sll", showOp);
-    Sra : $format("sra", showOp);
-    Srl : $format("srl", showOp);
-    Sub : $format("sub", showOp);
-    Jal : $format("jal ", rd, ", ", sxi);
-    Jalr : $format("jalr ", rd, ", ", rs1, ", ", si);
-    Beq : $format("beq ", rs1, ", ", rs2, ", ", sxi);
-    Bne : $format("bne ", rs1, ", ", rs2, ", ", sxi);
-    Blt : $format("blt ", rs1, ", ", rs2, ", ", sxi);
-    Bltu : $format("bltu ", rs1, ", ", rs2, ", ", sxi);
-    Bge : $format("bge ", rs1, ", ", rs2, ", ", sxi);
-    Bgeu : $format("bgeu ", rs1, ", ", rs2, ", ", sxi);
-    Load : begin
-      case (tuple2(instr.isUnsigned, instr.accessWidth)) matches
-        {False, 2'b00} : $format("lb ", rd, ", ", si, "(", rs1, ")");
-        {True, 2'b00} : $format("lbu ", rd, ", ", si, "(", rs1, ")");
-        {False, 2'b01} : $format("lh ", rd, ", ", si, "(", rs1, ")");
-        {True, 2'b01} : $format("lhu ", rd, ", ", si, "(", rs1, ")");
-        {False, 2'b10} : $format("lw ", rd, ", ", si, "(", rs1, ")");
-      endcase
+    case (instr.opcode) matches
+      Err : $write("err");
+      Move : $write("mv ", rd, ", ", rs1);
+      Lui : $write("lui ", rd, ", ", xi);
+      Auipc : $write("auipc ", rd, ", ", sxi);
+      Add : begin $write("add"); showOp = True; end
+      Slt : begin $write("slt"); showOp = True; end
+      Sltu : begin $write("sltu"); showOp = True; end
+      And : begin $write("and"); showOp = True; end
+      Clz : begin $write("clz"); showOp = True; end
+      Ctz : begin $write("ctz"); showOp = True; end
+      Cpop : begin $write("cpop"); showOp = True; end
+      Min : begin $write("min"); showOp = True; end
+      Minu : begin $write("minu"); showOp = True; end
+      Max : begin $write("max"); showOp = True; end
+      Maxu : begin $write("maxu"); showOp = True; end
+      Andn : begin $write("andn"); showOp = True; end
+      Xnor : begin $write("xnor"); showOp = True; end
+      Orn : begin $write("orn"); showOp = True; end
+      Zexth : begin $write("zexth"); showOp = True; end
+      Sexth : begin $write("sexth"); showOp = True; end
+      Sextb : begin $write("sextb"); showOp = True; end
+      Ror : begin $write("ror"); showOp = True; end
+      Rol : begin $write("rol"); showOp = True; end
+      Orcb : begin $write("orcn"); showOp = True; end
+      Rev8 : begin $write("rev8"); showOp = True; end
+      Sh1add : begin $write("sh1add"); showOp = True; end
+      Sh2add : begin $write("sh2add"); showOp = True; end
+      Sh3add : begin $write("sh3add"); showOp = True; end
+      Mul : begin $write("mul"); showOp = True; end
+      Mulh : begin $write("mulh"); showOp = True; end
+      Mulhu : begin $write("mulhu"); showOp = True; end
+      Mulhsu : begin $write("mulhsu"); showOp = True; end
+      Div : begin $write("div"); showOp = True; end
+      Divu : begin $write("divu"); showOp = True; end
+      Rem : begin $write("rem"); showOp = True; end
+      Remu : begin $write("remu"); showOp = True; end
+      Or : begin $write("or"); showOp = True; end
+      Xor : begin $write("xor"); showOp = True; end
+      Sll : begin $write("sll"); showOp = True; end
+      Sra : begin $write("sra"); showOp = True; end
+      Srl : begin $write("srl"); showOp = True; end
+      Sub : begin $write("sub"); showOp = True; end
+      Jal : $write("jal ", rd, ", ", sxi);
+      Jalr : $write("jalr ", rd, ", ", rs1, ", ", si);
+      Beq : $write("beq ", rs1, ", ", rs2, ", ", sxi);
+      Bne : $write("bne ", rs1, ", ", rs2, ", ", sxi);
+      Blt : $write("blt ", rs1, ", ", rs2, ", ", sxi);
+      Bltu : $write("bltu ", rs1, ", ", rs2, ", ", sxi);
+      Bge : $write("bge ", rs1, ", ", rs2, ", ", sxi);
+      Bgeu : $write("bgeu ", rs1, ", ", rs2, ", ", sxi);
+      Load : begin
+        case (tuple2(instr.isUnsigned, instr.accessWidth)) matches
+          {False, 2'b00} : $write("lb ", rd, ", ", si, "(", rs1, ")");
+          {True, 2'b00} : $write("lbu ", rd, ", ", si, "(", rs1, ")");
+          {False, 2'b01} : $write("lh ", rd, ", ", si, "(", rs1, ")");
+          {True, 2'b01} : $write("lhu ", rd, ", ", si, "(", rs1, ")");
+          {False, 2'b10} : $write("lw ", rd, ", ", si, "(", rs1, ")");
+        endcase
+      end
+      Store : begin
+        case (instr.accessWidth) matches
+          2'b00 : $write("sb ", rs2, ", ", si, "(", rs1, ")");
+          2'b01 : $write("sh ", rs2, ", ", si, "(", rs1, ")");
+          2'b10 : $write("sw ", rs2, ", ", si, "(", rs1, ")");
+        endcase
+      end
+      default: $write("unknown");
+    endcase
+
+    if (showOp) begin
+      if (instr.immValid) $write("i ", rd, ", ", rs1, ", ", si);
+      else $write(" ", rd, ", ", rs1, ", ", rs2);
     end
-    Store : begin
-      case (instr.accessWidth) matches
-        2'b00 : $format("sb ", rs2, ", ", si, "(", rs1, ")");
-        2'b01 : $format("sh ", rs2, ", ", si, "(", rs1, ")");
-        2'b10 : $format("sw ", rs2, ", ", si, "(", rs1, ")");
-      endcase
-    end
-  endcase;
+  endaction
 endfunction
 
 typedef enum {

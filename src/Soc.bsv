@@ -28,7 +28,7 @@ endinterface
 module mkSoc(MainIfc);
   let cpu <- mkCPU();
 
-  Integer memSize = 'hFFFF;
+  Integer memSize = 'hFFFFF;
 
   //BRAM_PORT_BE#(Bit#(32), Bit#(256), 32) dmem <-
   //  mkBRAMCore1BELoad(memSize, False, "Mem256.mem", False);
