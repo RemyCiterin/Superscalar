@@ -20,6 +20,8 @@ typedef 8 SinkW;    // Width (in bits) of the tilelink "sink" field
 typedef 8 SizeW;    // Width (in bits) of the tilelink "size" field
 typedef 1 NCache;   // Number of higher level caches to track
 
+Bool debug = False;
+
 typedef TDiv#(LineW,8) MaskW;
 typedef TLog#(TDiv#(LineW,8)) OffsetW;
 typedef Bit#(LineW) Line;
@@ -106,12 +108,14 @@ module mkLLC#(Vector#(NCache, Bit#(SourceW)) sources) (LLC);
       source: sources[id]
     });
 
-    //$display("send: ", fshow((ChannelB#(`TL_LLC))'(ChannelB{
-    //  size: fromInteger(valueof(TLog#(TDiv#(LineW,8)))),
-    //  opcode: ProbeBlock(probeCap.sub(tr)),
-    //  address: probeAddr.sub(tr),
-    //  source: sources[id]
-    //})));
+    if (debug) begin
+      $display("send: ", fshow((ChannelB#(`TL_LLC))'(ChannelB{
+        size: fromInteger(valueof(TLog#(TDiv#(LineW,8)))),
+        opcode: ProbeBlock(probeCap.sub(tr)),
+        address: probeAddr.sub(tr),
+        source: sources[id]
+      })));
+    end
   endrule
 
   rule probe_deq;
@@ -138,7 +142,7 @@ module mkLLC#(Vector#(NCache, Bit#(SourceW)) sources) (LLC);
   // Grant acknoledge
   ///////////////////////////////////////////////////////////////////////////////////////
   rule lookup_e if (canStartE);
-    //$display("receive: ", fshow(sinkE.first));
+    if (debug) $display("receive: ", fshow(sinkE.first));
     Transaction tr = truncate(sinkE.first.sink);
     Physical phys = unpack(requests.sub(tr).address);
     pipeline.enter(
@@ -158,7 +162,7 @@ module mkLLC#(Vector#(NCache, Bit#(SourceW)) sources) (LLC);
   // Accept a response from memory
   ///////////////////////////////////////////////////////////////////////////////////////
   rule lookup_d if (canStartD);
-    //$display("receive: ", fshow(sinkD.first));
+    if (debug) $display("receive: ", fshow(sinkD.first));
     Transaction tr = truncate(sinkD.first.source >> 1);
     Physical phys = unpack(requests.sub(tr).address);
     pipeline.enter(
@@ -178,7 +182,7 @@ module mkLLC#(Vector#(NCache, Bit#(SourceW)) sources) (LLC);
   // Accept a probe response/release request
   ///////////////////////////////////////////////////////////////////////////////////////
   rule lookup_c if (canStartC);
-    //$display("receive: ", fshow(sinkC.first));
+    if (debug) $display("receive: ", fshow(sinkC.first));
     Physical phys = unpack(sinkC.first.address);
     pipeline.enter(
       phys.tag,
@@ -203,7 +207,7 @@ module mkLLC#(Vector#(NCache, Bit#(SourceW)) sources) (LLC);
       let request = requests.sub(tr);
       transactions.retry(tr);
 
-      //$display("retry: ", fshow(request));
+      if (debug) $display("retry: ", fshow(request));
       Physical phys = unpack(request.address);
       pipeline.enter(
         phys.tag, phys.set, Valid(ways.sub(tr)),
@@ -217,7 +221,7 @@ module mkLLC#(Vector#(NCache, Bit#(SourceW)) sources) (LLC);
       Bool blocked <- transactions.searchA(phys.set);
       if (!blocked) begin
         let tr <- transactions.enter(phys.set);
-        //$display("receive: ", fshow(sinkA.first));
+        if (debug) $display("receive: ", fshow(sinkA.first));
         pipeline.enter(
           phys.tag,
           phys.set,
@@ -338,8 +342,6 @@ module mkLLC#(Vector#(NCache, Bit#(SourceW)) sources) (LLC);
       (needed == T && other_owners != 0) ||
       (needed == B && other_owners != 0 && pipeline.data.exclusive);
 
-    probeCap.upd(pipeline.transaction, needed == T ? N : B);
-
     function Action startRefill();
       action
         refillBuffer.enq(ChannelA{
@@ -383,6 +385,7 @@ module mkLLC#(Vector#(NCache, Bit#(SourceW)) sources) (LLC);
       probes.enter(phys.set, pipeline.transaction, pipeline.data.owners);
       transactions.refillDone(pipeline.transaction);
       transactions.evictDone(pipeline.transaction);
+      probeCap.upd(pipeline.transaction, N);
       pipeline.deq(False, False, ?, ?);
 
     end else if (Valid(phys.tag) != pipeline.tag && pipeline.data.owners == 0) begin
@@ -404,6 +407,7 @@ module mkLLC#(Vector#(NCache, Bit#(SourceW)) sources) (LLC);
 
       //$display("probe: 0x%h", pack(phys));
       probes.enter(phys.set, pipeline.transaction, other_owners);
+      probeCap.upd(pipeline.transaction, needed == T ? N : B);
       probeAddr.upd(pipeline.transaction, pack(refillPhys));
       transactions.refillDone(pipeline.transaction);
       transactions.evictDone(pipeline.transaction);

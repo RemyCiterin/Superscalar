@@ -128,10 +128,11 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   Reg#(Bit#(32)) numHit <- mkConfigReg(0);
   Reg#(Bit#(32)) numMis <- mkConfigReg(0);
 
-  Vector#(NumWays, MultiRF#(1, 1, Index, Maybe#(Tag)))
+  Vector#(NumWays, MultiRF#(1, 1, Index, Tag))
     tagRams <- replicateM(mkForwardMultiRF(0, fromInteger(2 ** valueof(IndexW) - 1)));
 
-  Vector#(NumWays, RegFile#(Index, Bool)) dirtyRams <- replicateM(mkRegFileFull);
+  Vector#(NumWays, MultiRF#(1, 1, Index, TLPerm))
+    permRams <- replicateM(mkForwardMultiRF(0, fromInteger(2 ** valueof(IndexW) - 1)));
 
   Vector#(NumWays, FORWARD_BRAM_BE#(Bit#(TAdd#(IndexW,OffsetW)), Bit#(32), 4)) dataRams <-
     replicateM(mkForwardBRAMCoreBE((2 ** valueof(IndexW)) * (2 ** valueof(OffsetW))));
@@ -153,6 +154,8 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   ////////////////////////////////////////////////////////////////////////////
   // Status of the current refill/evict request
   ////////////////////////////////////////////////////////////////////////////
+  Reg#(OpcodeA) refill_opcode <- mkRegU;
+  Reg#(OpcodeC) evict_opcode <- mkRegU;
   Reg#(Offset) refill_offset <- mkRegU;
   Reg#(Offset) evict_offset <- mkRegU;
   Reg#(Tag) evict_tag <- mkRegU;
@@ -160,19 +163,25 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   ////////////////////////////////////////////////////////////////////////////
   // State of the current cpu request
   ////////////////////////////////////////////////////////////////////////////
-  Reg#(Maybe#(Tag)) cpu_tag <- mkRegU;
   Reg#(DCacheReq) cpu_req <- mkRegU;
   Reg#(Physical) cpu_phys <- mkRegU;
-  Reg#(Bool) cpu_hit <- mkRegU;
+  Reg#(TLPerm) cpu_perm <- mkRegU;
+  Reg#(Tag) cpu_tag <- mkRegU;
   Reg#(Way) cpu_way <- mkRegU;
+
+  Bool cpu_hit =
+    cpu_tag == cpu_phys.tag && cpu_perm != N &&
+    (cpu_req.opcode == Ld || cpu_perm == T || cpu_perm == D);
 
   ////////////////////////////////////////////////////////////////////////////
   // State of the current probe request
   ////////////////////////////////////////////////////////////////////////////
+  Reg#(OpcodeC) probe_opcode <- mkRegU;
   Reg#(Physical) probe_phys <- mkRegU;
   Reg#(Offset) probe_offset <- mkRegU;
+  Reg#(TLPerm) probe_perm <- mkRegU;
   Reg#(State) nextState <- mkRegU;
-  Reg#(Bool) probe_hit <- mkRegU;
+  Reg#(Cap) probe_cap <- mkRegU;
   Reg#(Way) probe_way <- mkRegU;
 
   ////////////////////////////////////////////////////////////////////////////
@@ -181,8 +190,7 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   Reg#(Index) initIndex <- mkReg(0);
 
   rule init if (state[0] == Init);
-    for (Integer i=0; i < ways; i = i + 1) tagRams[i].writePorts[0].request(initIndex, Invalid);
-    for (Integer i=0; i < ways; i = i + 1) dirtyRams[i].upd(initIndex, False);
+    for (Integer i=0; i < ways; i = i + 1) permRams[i].writePorts[0].request(initIndex, N);
     if (initIndex + 1 == 0) state[0] <= Idle;
     initIndex <= initIndex + 1;
   endrule
@@ -193,19 +201,28 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   rule probe_lookup if (state[1] == Idle || state[1] == Refill);
     Physical phys = unpack(queueB.first.address);
 
-    Vector#(NumWays, Maybe#(Tag)) tags = newVector;
-    Bool found = False;
     Way w = randomWay;
+    TLPerm perm = N;
 
     for (Integer i=0; i < ways; i = i + 1) begin
-      Maybe#(Tag) tag <- tagRams[i].readPorts[0].request(phys.index);
-      tags[i] = tag;
+      TLPerm p <- permRams[i].readPorts[0].request(phys.index);
+      Tag t <- tagRams[i].readPorts[0].request(phys.index);
+
+      if (t == phys.tag) begin
+        w = fromInteger(i);
+        perm = p;
+      end
     end
+
+    probe_cap <= case (queueB.first.opcode) matches
+      tagged ProbeBlock .c : c;
+      tagged ProbePerms .c : c;
+    endcase;
 
     state[1] <= MatchingProbe;
     nextState <= state[1];
     probe_phys <= phys;
-    probe_hit <= found;
+    probe_perm <= perm;
     probe_offset <= 0;
     probe_way <= w;
 
@@ -213,22 +230,34 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   endrule
 
   rule probe_match if (state[0] == MatchingProbe);
-    if (probe_hit) begin
-      tagRams[probe_way].writePorts[0].request(probe_phys.index, Invalid);
-      dirtyRams[probe_way].upd(probe_phys.index, False);
+    match {.new_perm, .opcode, .evict} = case (tuple2(probe_perm, probe_cap)) matches
+      {T, B} : tuple3(TLPerm'(B), ProbeAckData(TtoB), True);
+      {T, N} : tuple3(TLPerm'(N), ProbeAckData(TtoN), True);
+      {D, B} : tuple3(TLPerm'(B), ProbeAckData(TtoB), True);
+      {D, N} : tuple3(TLPerm'(N), ProbeAckData(TtoN), True);
+      {B, N} : tuple3(TLPerm'(N), ProbeAckData(BtoN), True);
+      {T, T} : tuple3(TLPerm'(T), ProbeAck(TtoT), False);
+      {D, T} : tuple3(TLPerm'(D), ProbeAck(TtoT), False);
+      {B, B} : tuple3(TLPerm'(B), ProbeAck(BtoB), False);
+      {N, N} : tuple3(TLPerm'(N), ProbeAck(NtoN), False);
+    endcase;
+
+    permRams[probe_way].writePorts[0].request(probe_phys.index, new_perm);
+    probe_opcode <= opcode;
+
+    if (evict) begin
       dataRams[probe_way].read({probe_phys.index, 0});
       state[0] <= EvictProbe;
       probe_offset <= 0;
     end else begin
+      state[0] <= nextState;
       queueC.enq(ChannelC{
         size: fromInteger(lineSize),
         address: pack(probe_phys),
-        opcode: ProbeAck(NtoN),
+        opcode: opcode,
         source: source,
         data: ?
       });
-
-      state[0] <= nextState;
     end
   endrule
 
@@ -240,8 +269,8 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
     queueC.enq(ChannelC{
       data: dataRams[probe_way].response,
       size: fromInteger(lineSize),
-      opcode: ProbeAckData(TtoN),
       address: pack(probe_phys),
+      opcode: probe_opcode,
       source: source
     });
   endrule
@@ -250,12 +279,21 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   // Cache line refill/evict sequence
   ////////////////////////////////////////////////////////////////////////////
   rule mis if (state[0] == Lookup && !cpu_hit && queueA.canEnq);
-    if (cpu_tag matches tagged Valid .t &&& dirtyRams[cpu_way].sub(cpu_phys.index)) begin
-      //$display("evict");
+    Grow grow =
+      cpu_tag == cpu_phys.tag && cpu_perm != N ? BtoT :
+        (cpu_req.opcode == St ? NtoT : NtoB);
+
+    Reduce reduce =
+      cpu_perm == B ? BtoN : TtoN;
+
+    if (cpu_tag != cpu_phys.tag && cpu_perm != N) begin
+      permRams[cpu_way].writePorts[0].request(cpu_phys.index, N);
+      evict_opcode <= cpu_perm == D ? ReleaseData(reduce) : Release(reduce);
       dataRams[cpu_way].read({ cpu_phys.index, 0 });
+      refill_opcode <= AcquireBlock(grow);
+      evict_tag <= cpu_tag;
       evict_offset <= 0;
       state[0] <= Evict;
-      evict_tag <= t;
     end else begin
       //$display("direct refill");
       refill_offset <= 0;
@@ -263,14 +301,12 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
       queueA.enq(ChannelA{
         address: pack(Physical{ tag: cpu_phys.tag, index: cpu_phys.index, offset: 0, lsb: 0 }),
         size: fromInteger(lineSize),
-        opcode: AcquireBlock(NtoT),
+        opcode: AcquireBlock(grow),
         source: source,
         mask: -1,
         data: ?
       });
     end
-
-    dirtyRams[cpu_way].upd(cpu_phys.index, False);
   endrule
 
   rule send_beat if (state[0] == Evict);
@@ -282,11 +318,11 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
       address: pack(Physical{ tag: evict_tag, index: cpu_phys.index, offset: 0, lsb: 0 }),
       data: dataRams[cpu_way].response,
       size: fromInteger(lineSize),
-      opcode: ReleaseData(TtoN),
+      opcode: evict_opcode,
       source: source
     });
 
-    if (evict_offset + 1 == 0) begin
+    if (evict_offset + 1 == 0 || !hasDataC(evict_opcode)) begin
       state[0] <= EvictWait;
     end
   endrule
@@ -300,7 +336,7 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
     queueA.enq(ChannelA{
       address: pack(Physical{ tag: cpu_phys.tag, index: cpu_phys.index, offset: 0, lsb: 0 }),
       size: fromInteger(lineSize),
-      opcode: AcquireBlock(NtoT),
+      opcode: refill_opcode,
       source: source,
       mask: -1,
       data: ?
@@ -312,19 +348,29 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
     //$display("%h %h %h", cpu_phys.tag, cpu_phys.index, cpu_phys.offset);
     queueD.deq;
 
-    dataRams[cpu_way].write(-1, { cpu_phys.index, refill_offset }, queueD.first.data);
+    if (hasDataD(queueD.first.opcode)) begin
+      dataRams[cpu_way].write(-1, { cpu_phys.index, refill_offset }, queueD.first.data);
+    end
 
     refill_offset <= refill_offset + 1;
 
-    if (refill_offset + 1 == 0) begin
-      tagRams[cpu_way].writePorts[0].request(cpu_phys.index, Valid(cpu_phys.tag));
+    if (refill_offset + 1 == 0 || !hasDataD(queueD.first.opcode)) begin
+      tagRams[cpu_way].writePorts[0].request(cpu_phys.index, cpu_phys.tag);
+
+      let exclusive = case (queueD.first.opcode) matches
+        tagged GrantData .cap : cap == T;
+        tagged Grant .cap : cap == T;
+      endcase;
+
+      permRams[cpu_way].writePorts[0].request(cpu_phys.index, exclusive ? D : B);
 
       queueE.enq(ChannelE{
         sink: queueD.first.sink,
         opcode: GrantAck
       });
 
-      cpu_hit <= True;
+      cpu_tag <= cpu_phys.tag;
+      cpu_perm <= exclusive ? D : B;
       for (Integer i=0; i < ways; i = i + 1) begin
         dataRams[i].read({ cpu_phys.index, cpu_phys.offset });
       end
@@ -347,7 +393,7 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
 
     if (commit && cpu_req.opcode == St) begin
       dataRams[cpu_way].write(cpu_req.mask, { cpu_phys.index, cpu_phys.offset }, cpu_req.data);
-      dirtyRams[cpu_way].upd(cpu_phys.index, True);
+      permRams[cpu_way].writePorts[0].request(cpu_phys.index, D);
     end
   endmethod
 
@@ -359,31 +405,33 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
     Physical phys = unpack(req.address);
     randomWay <= randomWay + 1;
 
-    Vector#(NumWays, Maybe#(Tag)) tags = newVector;
+    Vector#(NumWays, TLPerm) perms = newVector;
+    Vector#(NumWays, Tag) tags = newVector;
     Bool found = False;
     Way w = randomWay;
 
     for (Integer i=0; i < ways; i = i + 1) begin
       dataRams[i].read({ phys.index, phys.offset });
 
-      Maybe#(Tag) tag <- tagRams[i].readPorts[0].request(phys.index);
+      TLPerm perm <- permRams[i].readPorts[0].request(phys.index);
+      Tag tag <- tagRams[i].readPorts[0].request(phys.index);
+      perms[i] = perm;
       tags[i] = tag;
 
-      if (tag == Valid(phys.tag)) begin
+      if (tag == phys.tag && perm != N) begin
         w = fromInteger(i);
-        found = True;
       end
     end
 
-    if (found) numHit <= numHit + 1;
+    if (perms[w] != N) numHit <= numHit + 1;
     else numMis <= numMis + 1;
 
-    cpu_way <= w;
-    cpu_hit <= found;
+    cpu_perm <= perms[w];
     cpu_tag <= tags[w];
     state[1] <= Lookup;
     cpu_phys <= phys;
     cpu_req <= req;
+    cpu_way <= w;
   endmethod
 
   ////////////////////////////////////////////////////////////////////////////
