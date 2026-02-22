@@ -4,7 +4,7 @@ import ForwardBRAM :: *;
 import BuildVector :: *;
 import ConfigReg :: *;
 import BRAMCore :: *;
-import RvDCache :: *;
+import RvDCacheCC :: *;
 import RvICache :: *;
 import RegFile :: *;
 import RvInstr :: *;
@@ -29,7 +29,7 @@ interface CpuIfc;
   method Bit#(1) transmit;
 
   interface TLMaster#(32, 32, 8, 8, 0) imaster;
-  interface TLMaster#(32, 32, 8, 8, 0) dmaster;
+  interface TLMaster#(32, 32, 8, 8, 8) dmaster;
 endinterface
 
 typedef struct {
@@ -76,11 +76,10 @@ module mkCPU(CpuIfc);
     regFile <- mkForwardMultiRF(0, 31);
 
   ////////////////////////////////////////////////////////////////////////////
-  // Epoch: eviry instruction with an epoch different than the current counter
+  // Epoch: every instruction with an epoch different than the current counter
   // must be flush
   ////////////////////////////////////////////////////////////////////////////
   Reg#(Epoch) epoch <- mkConfigReg(0);
-
 
   ////////////////////////////////////////////////////////////////////////////
   // Pipeline front-end

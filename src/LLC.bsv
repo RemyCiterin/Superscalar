@@ -13,7 +13,7 @@ import CachePipe :: *;
 typedef 256 LineW; // Width (in bits) of one cache line
 typedef 256 Sets;  // Number of "set"
 typedef 8 Ways;    // Number of element per "set"
-typedef 4 TQ_SIZE; // Maximum number of concurent requests
+typedef 8 TQ_SIZE; // Maximum number of concurent requests
 typedef 32 AddrW;  // Width (in bits) of the tilelink "address" field
 typedef 8 SourceW; // Width (in bits) of the tilelink "source" field
 typedef 8 SizeW;   // Width (in bits) of the tilelink "size" field

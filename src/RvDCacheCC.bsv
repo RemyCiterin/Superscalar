@@ -107,15 +107,23 @@ typedef enum {
   Init,
   Idle,
   Lookup,
+  LookupProbeIdle,
+  LookupProbe,
+  MatchingProbe,
+  EvictProbe,
   Evict,
   EvictWait,
   Refill,
   Redo
 } State deriving(Bits, Eq);
 
+
 module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   Fifo#(2, ChannelA#(32, 32, sizeW, sourceW, sinkW)) queueA <- mkFifo;
+  Fifo#(2, ChannelB#(32, 32, sizeW, sourceW, sinkW)) queueB <- mkFifo;
+  Fifo#(2, ChannelC#(32, 32, sizeW, sourceW, sinkW)) queueC <- mkFifo;
   Fifo#(2, ChannelD#(32, 32, sizeW, sourceW, sinkW)) queueD <- mkFifo;
+  Fifo#(2, ChannelE#(32, 32, sizeW, sourceW, sinkW)) queueE <- mkFifo;
 
   Reg#(Bit#(32)) numHit <- mkConfigReg(0);
   Reg#(Bit#(32)) numMis <- mkConfigReg(0);
@@ -138,13 +146,34 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   Reg#(Way) randomWay <- mkReg(0);
 
   ////////////////////////////////////////////////////////////////////////////
-  // State of the current request
+  // State of the cache
   ////////////////////////////////////////////////////////////////////////////
   Reg#(State) state[2] <- mkCReg(2, Init);
-  Reg#(DCacheReq) request <- mkRegU;
-  Reg#(Physical) physical <- mkRegU;
-  Reg#(Offset) offset <- mkRegU;
-  Reg#(Tag) tag <- mkRegU;
+
+  ////////////////////////////////////////////////////////////////////////////
+  // Status of the current refill/evict request
+  ////////////////////////////////////////////////////////////////////////////
+  Reg#(Offset) refill_offset <- mkRegU;
+  Reg#(Offset) evict_offset <- mkRegU;
+  Reg#(Tag) evict_tag <- mkRegU;
+
+  ////////////////////////////////////////////////////////////////////////////
+  // State of the current cpu request
+  ////////////////////////////////////////////////////////////////////////////
+  Reg#(Maybe#(Tag)) cpu_tag <- mkRegU;
+  Reg#(DCacheReq) cpu_req <- mkRegU;
+  Reg#(Physical) cpu_phys <- mkRegU;
+  Reg#(Bool) cpu_hit <- mkRegU;
+  Reg#(Way) cpu_way <- mkRegU;
+
+  ////////////////////////////////////////////////////////////////////////////
+  // State of the current probe request
+  ////////////////////////////////////////////////////////////////////////////
+  Reg#(Physical) probe_phys <- mkRegU;
+  Reg#(Offset) probe_offset <- mkRegU;
+  Reg#(State) nextState <- mkRegU;
+  Reg#(Bool) probe_hit <- mkRegU;
+  Reg#(Way) probe_way <- mkRegU;
 
   ////////////////////////////////////////////////////////////////////////////
   // Initialize cache
@@ -158,52 +187,106 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
     initIndex <= initIndex + 1;
   endrule
 
-  Reg#(Maybe#(Tag)) currentTag <- mkRegU;
-  Reg#(Bool) hit <- mkRegU;
-  Reg#(Way) way <- mkRegU;
+  ////////////////////////////////////////////////////////////////////////////
+  // Probe seauence (we receive an invalidation request from the cache controller)
+  ////////////////////////////////////////////////////////////////////////////
+  rule probe_lookup if (state[1] == Idle || state[1] == Refill);
+    Physical phys = unpack(queueB.first.address);
+
+    Vector#(NumWays, Maybe#(Tag)) tags = newVector;
+    Bool found = False;
+    Way w = randomWay;
+
+    for (Integer i=0; i < ways; i = i + 1) begin
+      Maybe#(Tag) tag <- tagRams[i].readPorts[0].request(phys.index);
+      tags[i] = tag;
+    end
+
+    state[1] <= MatchingProbe;
+    nextState <= state[1];
+    probe_phys <= phys;
+    probe_hit <= found;
+    probe_offset <= 0;
+    probe_way <= w;
+
+    queueB.deq;
+  endrule
+
+  rule probe_match if (state[0] == MatchingProbe);
+    if (probe_hit) begin
+      tagRams[probe_way].writePorts[0].request(probe_phys.index, Invalid);
+      dirtyRams[probe_way].upd(probe_phys.index, False);
+      dataRams[probe_way].read({probe_phys.index, 0});
+      state[0] <= EvictProbe;
+      probe_offset <= 0;
+    end else begin
+      queueC.enq(ChannelC{
+        size: fromInteger(lineSize),
+        address: pack(probe_phys),
+        opcode: ProbeAck(NtoN),
+        source: source,
+        data: ?
+      });
+
+      state[0] <= nextState;
+    end
+  endrule
+
+  rule probe_evict if (state[0] == EvictProbe);
+    dataRams[probe_way].read({probe_phys.index, probe_offset+1});
+    if (probe_offset+1 == 0) state[0] <= nextState;
+    probe_offset <= probe_offset+1;
+
+    queueC.enq(ChannelC{
+      data: dataRams[probe_way].response,
+      size: fromInteger(lineSize),
+      opcode: ProbeAckData(TtoN),
+      address: pack(probe_phys),
+      source: source
+    });
+  endrule
 
   ////////////////////////////////////////////////////////////////////////////
   // Cache line refill/evict sequence
   ////////////////////////////////////////////////////////////////////////////
-  rule mis if (state[0] == Lookup && !hit && queueA.canEnq);
-    if (currentTag matches tagged Valid .t &&& dirtyRams[way].sub(physical.index)) begin
+  rule mis if (state[0] == Lookup && !cpu_hit && queueA.canEnq);
+    if (cpu_tag matches tagged Valid .t &&& dirtyRams[cpu_way].sub(cpu_phys.index)) begin
       //$display("evict");
-      dataRams[way].read({ physical.index, 0 });
+      dataRams[cpu_way].read({ cpu_phys.index, 0 });
+      evict_offset <= 0;
       state[0] <= Evict;
-      offset <= 0;
-      tag <= t;
+      evict_tag <= t;
     end else begin
       //$display("direct refill");
-      offset <= 0;
+      refill_offset <= 0;
       state[0] <= Refill;
       queueA.enq(ChannelA{
-        address: pack(Physical{ tag: physical.tag, index: physical.index, offset: 0, lsb: 0 }),
+        address: pack(Physical{ tag: cpu_phys.tag, index: cpu_phys.index, offset: 0, lsb: 0 }),
         size: fromInteger(lineSize),
-        opcode: GetFull,
+        opcode: AcquireBlock(NtoT),
         source: source,
         mask: -1,
         data: ?
       });
     end
 
-    dirtyRams[way].upd(physical.index, False);
+    dirtyRams[cpu_way].upd(cpu_phys.index, False);
   endrule
 
   rule send_beat if (state[0] == Evict);
-    //$display("evict beat ", offset);
-    dataRams[way].read({ physical.index, offset + 1 });
-    offset <= offset + 1;
+    //$display("evict beat ", evict_offset);
+    dataRams[cpu_way].read({ cpu_phys.index, evict_offset + 1 });
+    evict_offset <= evict_offset + 1;
 
-    queueA.enq(ChannelA{
-      address: pack(Physical{ tag: tag, index: physical.index, offset: 0, lsb: 0 }),
-      data: dataRams[way].response,
+    queueC.enq(ChannelC{
+      address: pack(Physical{ tag: evict_tag, index: cpu_phys.index, offset: 0, lsb: 0 }),
+      data: dataRams[cpu_way].response,
       size: fromInteger(lineSize),
-      opcode: PutData,
-      source: source,
-      mask: -1
+      opcode: ReleaseData(TtoN),
+      source: source
     });
 
-    if (offset + 1 == 0) begin
+    if (evict_offset + 1 == 0) begin
       state[0] <= EvictWait;
     end
   endrule
@@ -212,12 +295,12 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
     queueD.deq;
     //$display("refill after evict");
 
-    offset <= 0;
+    refill_offset <= 0;
     state[0] <= Refill;
     queueA.enq(ChannelA{
-      address: pack(Physical{ tag: physical.tag, index: physical.index, offset: 0, lsb: 0 }),
+      address: pack(Physical{ tag: cpu_phys.tag, index: cpu_phys.index, offset: 0, lsb: 0 }),
       size: fromInteger(lineSize),
-      opcode: GetFull,
+      opcode: AcquireBlock(NtoT),
       source: source,
       mask: -1,
       data: ?
@@ -225,20 +308,25 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   endrule
 
   rule receive_beat if (state[0] == Refill);
-    //$display("refill beat ", offset);
-    //$display("%h %h %h", physical.tag, physical.index, physical.offset);
+    //$display("refill beat ", refill_offset);
+    //$display("%h %h %h", cpu_phys.tag, cpu_phys.index, cpu_phys.offset);
     queueD.deq;
 
-    dataRams[way].write(-1, { physical.index, offset }, queueD.first.data);
+    dataRams[cpu_way].write(-1, { cpu_phys.index, refill_offset }, queueD.first.data);
 
-    offset <= offset + 1;
+    refill_offset <= refill_offset + 1;
 
-    if (offset + 1 == 0) begin
-      tagRams[way].writePorts[0].request(physical.index, Valid(physical.tag));
+    if (refill_offset + 1 == 0) begin
+      tagRams[cpu_way].writePorts[0].request(cpu_phys.index, Valid(cpu_phys.tag));
 
-      hit <= True;
+      queueE.enq(ChannelE{
+        sink: queueD.first.sink,
+        opcode: GrantAck
+      });
+
+      cpu_hit <= True;
       for (Integer i=0; i < ways; i = i + 1) begin
-        dataRams[i].read({ physical.index, physical.offset });
+        dataRams[i].read({ cpu_phys.index, cpu_phys.offset });
       end
 
       //$display("finish refill");
@@ -249,17 +337,17 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   ////////////////////////////////////////////////////////////////////////////
   // Respond in case of a cache hit or after evict/refill
   ////////////////////////////////////////////////////////////////////////////
-  method Bit#(32) response = dataRams[way].response;
+  method Bit#(32) response = dataRams[cpu_way].response;
 
-  method Bool valid = state[0] == Lookup && hit;
+  method Bool valid = state[0] == Lookup && cpu_hit;
 
-  method Action deq(Bool commit) if (state[0] == Lookup && hit);
+  method Action deq(Bool commit) if (state[0] == Lookup && cpu_hit);
     //$display("commit");
     state[0] <= Idle;
 
-    if (commit && request.opcode == St) begin
-      dataRams[way].write(request.mask, { physical.index, physical.offset }, request.data);
-      dirtyRams[way].upd(physical.index, True);
+    if (commit && cpu_req.opcode == St) begin
+      dataRams[cpu_way].write(cpu_req.mask, { cpu_phys.index, cpu_phys.offset }, cpu_req.data);
+      dirtyRams[cpu_way].upd(cpu_phys.index, True);
     end
   endmethod
 
@@ -267,7 +355,7 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   // Enter a new request to the cache
   ////////////////////////////////////////////////////////////////////////////
   method Bool canLookup = state[1] == Idle;
-  method Action lookup(DCacheReq req) if (state[1] == Idle);
+  method Action lookup(DCacheReq req) if (state[1] == Idle && !queueB.canDeq);
     Physical phys = unpack(req.address);
     randomWay <= randomWay + 1;
 
@@ -290,12 +378,12 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
     if (found) numHit <= numHit + 1;
     else numMis <= numMis + 1;
 
-    way <= w;
-    hit <= found;
-    currentTag <= tags[w];
+    cpu_way <= w;
+    cpu_hit <= found;
+    cpu_tag <= tags[w];
     state[1] <= Lookup;
-    physical <= phys;
-    request <= req;
+    cpu_phys <= phys;
+    cpu_req <= req;
   endmethod
 
   ////////////////////////////////////////////////////////////////////////////
@@ -303,10 +391,10 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   ////////////////////////////////////////////////////////////////////////////
   interface TLMaster master;
     interface channelA = toFifoO(queueA);
-    interface channelB = nullFifoI;
-    interface channelC = nullFifoO;
+    interface channelB = toFifoI(queueB);
+    interface channelC = toFifoO(queueC);
     interface channelD = toFifoI(queueD);
-    interface channelE = nullFifoO;
+    interface channelE = toFifoO(queueE);
   endinterface
 
   method stats = DCacheStats{

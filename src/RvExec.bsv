@@ -2,8 +2,8 @@ import MultiRegFile :: *;
 import RvBranchPred :: *;
 import ForwardBRAM :: *;
 import BuildVector :: *;
+import RvDCacheCC :: *;
 import BRAMCore :: *;
-import RvDCache :: *;
 import RegFile :: *;
 import RvInstr :: *;
 import RvFetch :: *;
@@ -143,7 +143,7 @@ interface LsuIfc;
 
   (* always_ready *) method DCacheStats stats;
 
-  interface TLMaster#(32, 32, 8, 8, 0) master;
+  interface TLMaster#(32, 32, 8, 8, 8) master;
 endinterface
 
 (* synthesize *)
@@ -159,7 +159,7 @@ module mkLsu(LsuIfc);
   Bit#(32) minDmemAddr = 'h80000000;
   Bit#(32) maxDmemAddr = 'h80000000 + 'hFFFFF;
 
-  DCache#(8, 8) cache <- mkDCache(0);
+  DCache#(8, 8, 8) cache <- mkDCache(1);
 
   Reg#(CauseException) cause2 <- mkRegU;
   Reg#(LsuRequest) request2 <- mkRegU;
