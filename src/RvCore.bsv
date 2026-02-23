@@ -4,7 +4,7 @@ import ForwardBRAM :: *;
 import BuildVector :: *;
 import ConfigReg :: *;
 import BRAMCore :: *;
-import RvDCacheCC :: *;
+import RvDCache :: *;
 import RvICache :: *;
 import RegFile :: *;
 import RvInstr :: *;

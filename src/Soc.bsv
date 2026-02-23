@@ -39,7 +39,7 @@ module mkSoc(MainIfc);
 
   //BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
   //  mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
-  //TLSlave#(32, 32, 8, 8, 0) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
+  //TLSlave#(32, 32, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
   //mkConnection(cpu.dmaster, dslave);
 
   BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) imem <-

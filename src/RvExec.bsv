@@ -2,7 +2,7 @@ import MultiRegFile :: *;
 import RvBranchPred :: *;
 import ForwardBRAM :: *;
 import BuildVector :: *;
-import RvDCacheCC :: *;
+import RvDCache :: *;
 import BRAMCore :: *;
 import RegFile :: *;
 import RvInstr :: *;
