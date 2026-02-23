@@ -262,6 +262,7 @@ function RvInstr decodeRvInstr(Bit#(32) data);
     endcase;
 
     if (opcode == 7'b0101111) begin // Sc/Lr/Amo
+      imm = 0;
       isMemAccess = True;
       isAcquire = funct7[1] == 1;
       isRelease = funct7[0] == 1;

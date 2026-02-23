@@ -54,6 +54,7 @@ dot:
 	$(foreach f, $(DOT_FILES), sed -i '/_block_ram_apply_write/d' $(f);)
 	$(foreach f, $(DOT_FILES), sed -i '/Sched /d' $(f);)
 
+.PHONY: kernel
 kernel:
 	elf_to_hex/elf_to_hex_32 soft/zig-out/bin/kernel.elf Mem.mem > /dev/null
 	elf_to_hex/elf_to_hex_32 soft/zig-out/bin/kernel.elf Mem32.mem > /dev/null
@@ -61,6 +62,21 @@ kernel:
 	elf_to_hex/elf_to_hex_128 soft/zig-out/bin/kernel.elf Mem128.mem > /dev/null
 	elf_to_hex/elf_to_hex_256 soft/zig-out/bin/kernel.elf Mem256.mem > /dev/null
 	riscv32-none-elf-objdump -D soft/zig-out/bin/kernel.elf > soft/firmware.asm
+
+.PHONY: rust
+rust:
+	elf_to_hex/elf_to_hex_32 rust/target/riscv32ima-unknown-none-elf/release/kernel Mem.mem \
+		> /dev/null
+	elf_to_hex/elf_to_hex_32 rust/target/riscv32ima-unknown-none-elf/release/kernel Mem32.mem \
+		> /dev/null
+	elf_to_hex/elf_to_hex_64 rust/target/riscv32ima-unknown-none-elf/release/kernel Mem64.mem \
+		> /dev/null
+	elf_to_hex/elf_to_hex_128 rust/target/riscv32ima-unknown-none-elf/release/kernel Mem128.mem \
+		> /dev/null
+	elf_to_hex/elf_to_hex_256 rust/target/riscv32ima-unknown-none-elf/release/kernel Mem256.mem \
+		> /dev/null
+	riscv32-none-elf-objdump -D rust/target/riscv32ima-unknown-none-elf/release/kernel \
+		> rust/firmware.asm
 
 .PHONY: coremark
 coremark:

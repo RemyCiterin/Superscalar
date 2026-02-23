@@ -34,7 +34,7 @@ function TLPerm opcodePermission(DCacheOpcode opcode);
     Amo : T;
     Ld : B;
     St : T;
-    Lr : B;
+    Lr : T;
     Sc : T;
   endcase;
 endfunction
@@ -54,9 +54,9 @@ typedef enum {
 function Bit#(32) computeAmo(DCacheAmo amo, Bit#(32) lhs, Bit#(32) rhs);
   return case (amo) matches
     Min : Int#(32)'(unpack(lhs)) < Int#(32)'(unpack(rhs)) ? lhs : rhs;
-    Max : Int#(32)'(unpack(lhs)) < Int#(32)'(unpack(rhs)) ? lhs : rhs;
+    Max : Int#(32)'(unpack(lhs)) < Int#(32)'(unpack(rhs)) ? rhs : lhs;
     Minu : lhs < rhs ? lhs : rhs;
-    Maxu : lhs < rhs ? lhs : rhs;
+    Maxu : lhs < rhs ? rhs : lhs;
     Add : lhs + rhs;
     Xor : lhs ^ rhs;
     And : lhs & rhs;

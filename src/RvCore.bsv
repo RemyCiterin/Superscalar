@@ -418,7 +418,8 @@ module mkCPU(CpuIfc);
           );
           $display(
             "  i-hit: %d i-mis: %d d-hit: %d d-mis: %d",
-            fetch.stats.hit, fetch.stats.mis, lsu_ifc.stats.hit, lsu_ifc.stats.mis
+            fetch.stats.hit, fetch.stats.mis, lsu_ifc.stats.hit, lsu_ifc.stats.mis,
+            fshow(instr.opcode)
           );
         end
 

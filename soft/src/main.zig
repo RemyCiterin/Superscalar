@@ -142,6 +142,11 @@ var X: [FFT_N]complex_t = blk: {
 };
 var F: [FFT_N]complex_t = undefined;
 
+pub export fn test_amo(x: *usize, y: *?usize) void {
+    x.* = 42;
+    y.* = @cmpxchgWeak(usize, x, 42, 57, .monotonic, .monotonic);
+}
+
 pub export fn kernel_main() align(16) callconv(.C) void {
     const logger = std.log.scoped(.kernel);
     logger.info("=== Start DOoOM ===", .{});
@@ -154,6 +159,11 @@ pub export fn kernel_main() align(16) callconv(.C) void {
         \\Kernel allocator initialized!
     , .{});
 
+    var x: usize = undefined;
+    var y: ?usize = undefined;
+    test_amo(&x, &y);
+    logger.info("x: {} y: {?}", .{ x, y });
+
     const n: usize = Ctx.N;
 
     for (0..n * n) |i| Ctx.A[i] = @intCast(i);
@@ -162,13 +172,10 @@ pub export fn kernel_main() align(16) callconv(.C) void {
 
     asm volatile ("fence" ::: "memory");
     matmul(n, &Ctx.A, &Ctx.B, &Ctx.C);
-    asm volatile ("fence" ::: "memory");
 
-    asm volatile ("fence" ::: "memory");
     //complex_t.dft(FFT_N, X[0..], F[0..]);
     //complex_t.fft(kalloc, X[0..], F[0..]) catch unreachable;
     complex_t.radix2(X[0..], F[0..]);
-    asm volatile ("fence" ::: "memory");
 
     for (0..FFT_N) |i| {
         UART.writer.print("{}:\n", .{i}) catch unreachable;
@@ -177,10 +184,8 @@ pub export fn kernel_main() align(16) callconv(.C) void {
     }
 
     ReduceAll.init();
-    asm volatile ("fence" ::: "memory");
     //ReduceAll.compute_tiled(block_optim(32));
     ReduceAll.compute();
-    asm volatile ("fence" ::: "memory");
 
     //NBody.init();
     //NBody.init_frame();
