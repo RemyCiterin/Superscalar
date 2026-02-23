@@ -22,9 +22,22 @@ typedef struct {
 } DCacheStats deriving(Bits);
 
 typedef enum {
+  Lr,
+  Sc,
   Ld,
-  St
+  St,
+  Amo
 } DCacheOpcode deriving(Bits, Eq, FShow);
+
+function TLPerm opcodePermission(DCacheOpcode opcode);
+  return case (opcode) matches
+    Amo : T;
+    Ld : B;
+    St : T;
+    Lr : B;
+    Sc : T;
+  endcase;
+endfunction
 
 typedef enum {
   Min,
@@ -137,6 +150,16 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   Vector#(NumWays, FORWARD_BRAM_BE#(Bit#(TAdd#(IndexW,OffsetW)), Bit#(32), 4)) dataRams <-
     replicateM(mkForwardBRAMCoreBE((2 ** valueof(IndexW)) * (2 ** valueof(OffsetW))));
 
+  ////////////////////////////////////////////////////////////////////////////
+  // Load reserve/Store conditional sequence
+  ////////////////////////////////////////////////////////////////////////////
+  Reg#(Bit#(8)) reservationCounter[3] <- mkCReg(3, 0);
+
+  (* fire_when_enabled, no_implicit_conditions *)
+  rule decr_reservation_counter;
+    if (reservationCounter[2] != 0) reservationCounter[2] <= reservationCounter[2] - 1;
+  endrule
+
   // A cache line is 2**5 = 32 bytes (= 256 bits)
   Integer lineSize = valueof(OffsetW) + 2;
   Integer ways = valueOf(NumWays);
@@ -163,6 +186,7 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   ////////////////////////////////////////////////////////////////////////////
   // State of the current cpu request
   ////////////////////////////////////////////////////////////////////////////
+  Reg#(Bool) cpu_sc_succeded <- mkRegU;
   Reg#(DCacheReq) cpu_req <- mkRegU;
   Reg#(Physical) cpu_phys <- mkRegU;
   Reg#(TLPerm) cpu_perm <- mkRegU;
@@ -171,7 +195,7 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
 
   Bool cpu_hit =
     cpu_tag == cpu_phys.tag && cpu_perm != N &&
-    (cpu_req.opcode == Ld || cpu_perm == T || cpu_perm == D);
+    (opcodePermission(cpu_req.opcode) == B || cpu_perm == T || cpu_perm == D);
 
   ////////////////////////////////////////////////////////////////////////////
   // State of the current probe request
@@ -198,7 +222,11 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   ////////////////////////////////////////////////////////////////////////////
   // Probe seauence (we receive an invalidation request from the cache controller)
   ////////////////////////////////////////////////////////////////////////////
-  rule probe_lookup if (state[1] == Idle || state[1] == Refill);
+  Bool canProbe =
+    queueB.canDeq && reservationCounter[1] == 0 &&
+    (state[1] == Idle || state[1] == Refill);
+
+  rule probe_lookup if (canProbe);
     Physical phys = unpack(queueB.first.address);
 
     Way w = randomWay;
@@ -281,7 +309,7 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   rule mis if (state[0] == Lookup && !cpu_hit && queueA.canEnq);
     Grow grow =
       cpu_tag == cpu_phys.tag && cpu_perm != N ? BtoT :
-        (cpu_req.opcode == St ? NtoT : NtoB);
+      (opcodePermission(cpu_req.opcode) == B ? NtoB : NtoT);
 
     Reduce reduce =
       cpu_perm == B ? BtoN : TtoN;
@@ -383,7 +411,8 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   ////////////////////////////////////////////////////////////////////////////
   // Respond in case of a cache hit or after evict/refill
   ////////////////////////////////////////////////////////////////////////////
-  method Bit#(32) response = dataRams[cpu_way].response;
+  method Bit#(32) response =
+    cpu_req.opcode == Sc ? zeroExtend(pack(!cpu_sc_succeded)) : dataRams[cpu_way].response;
 
   method Bool valid = state[0] == Lookup && cpu_hit;
 
@@ -391,17 +420,27 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
     //$display("commit");
     state[0] <= Idle;
 
-    if (commit && cpu_req.opcode == St) begin
+    if (commit && (cpu_req.opcode == St || (cpu_req.opcode == Sc && cpu_sc_succeded))) begin
       dataRams[cpu_way].write(cpu_req.mask, { cpu_phys.index, cpu_phys.offset }, cpu_req.data);
       permRams[cpu_way].writePorts[0].request(cpu_phys.index, D);
     end
+
+    if (commit && cpu_req.opcode == Amo) begin
+      Bit#(32) newData = computeAmo(cpu_req.amo, dataRams[cpu_way].response, cpu_req.data);
+      dataRams[cpu_way].write(cpu_req.mask, { cpu_phys.index, cpu_phys.offset }, newData);
+      permRams[cpu_way].writePorts[0].request(cpu_phys.index, D);
+    end
+
+    reservationCounter[0] <= cpu_req.opcode == Lr && commit ? 32 : 0;
   endmethod
 
   ////////////////////////////////////////////////////////////////////////////
   // Enter a new request to the cache
   ////////////////////////////////////////////////////////////////////////////
-  method Bool canLookup = state[1] == Idle;
-  method Action lookup(DCacheReq req) if (state[1] == Idle && !queueB.canDeq);
+  method Bool canLookup = state[1] == Idle && !canProbe;
+  method Action lookup(DCacheReq req)
+    if (state[1] == Idle && (reservationCounter[1] != 0 || !queueB.canDeq));
+
     Physical phys = unpack(req.address);
     randomWay <= randomWay + 1;
 
@@ -426,6 +465,7 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
     if (perms[w] != N) numHit <= numHit + 1;
     else numMis <= numMis + 1;
 
+    cpu_sc_succeded <= reservationCounter[1] != 0;
     cpu_perm <= perms[w];
     cpu_tag <= tags[w];
     state[1] <= Lookup;

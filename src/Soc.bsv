@@ -16,9 +16,6 @@ import TLBram::*;
 import RvCore :: *;
 import RvSystem::*;
 
-import CachePipe::*;
-
-
 interface MainIfc;
   (* always_ready, always_enabled *)
   method Bit#(8) led;
