@@ -156,8 +156,6 @@ module mkLsu(LsuIfc);
   Reg#(Bit#(32)) pc1 <- mkRegU;
 
   TxUART txUart <- mkTxUART(1_000_000 / 115200);
-  Bit#(32) minDmemAddr = 'h80000000;
-  Bit#(32) maxDmemAddr = 'h80000000 + 'hFFFFF;
 
   DCache#(8, 8, 8) cache <- mkDCache(1);
 

@@ -24,10 +24,10 @@ function InstrKind instrKind(RvInstr instr);
     Bltu : Branch;
     Bge  : Branch;
     Bgeu : Branch;
-    Jal  : Jump;
-    Jalr : case (tuple2(instr.rs1, instr.rs2)) matches
-      Tuple2 {fst: 1, snd: 5}  : Call;
-      Tuple2 {fst: 5, snd: 1}  : Call;
+    Jal  : instr.rd == 1 || instr.rd == 5 ? Call : Jump;
+    Jalr : case (tuple2(instr.rd, instr.rs1)) matches
+      Tuple2 {fst: 1, snd: 5}  : RetCall;
+      Tuple2 {fst: 5, snd: 1}  : RetCall;
       Tuple2 {fst: 5, snd: .*} : Call;
       Tuple2 {fst: 1, snd: .*} : Call;
       Tuple2 {fst: .*, snd: 5} : Ret;
@@ -178,6 +178,7 @@ module mkReturnAddressStack(ReturnAddressStack);
     endcase;
 
     if (kind == Call) stack.upd(head, Valid(pc+4));
+    if (kind == RetCall) stack.upd(head-1, Valid(pc+4));
 
     return kind == Ret ? stack.sub(head-1) : Invalid;
   endmethod
@@ -322,10 +323,10 @@ module mkBranchPredictor(BranchPred);
     let taken = pht.prediction || kind != Branch;
 
     let returnPc <- ras.pred(lane + zeroExtend(btb.predOffset) * 4, kind);
+    //let returnPc <- ras.pred(pcReg, kind);
     if (returnPc matches tagged Valid .newPc) targetPc = newPc;
 
-    if (targetPc != lane + fromInteger(4 * supSize) && kind == Branch)
-      history[0] <= {truncate(history[0]), taken ? 1'b1 : 1'b0};
+    if (kind == Branch) history[0] <= {truncate(history[0]), taken ? 1'b1 : 1'b0};
 
     return tuple3(
       taken ? targetPc : lane + fromInteger(4 * supSize),
@@ -342,22 +343,6 @@ module mkBranchPredictor(BranchPred);
   endmethod
 
   method Action trainHit(BranchPredTrain infos);
-    let kind = instrKindOpt(infos.instrs);
-
-    let ghr = infos.state.ghr;
-    let lane = infos.pc & laneMask;
-    let baseNextPc = infos.nextPc & laneMask;
-    Bit#(SupLogSize) offset = truncate(infos.pc >> 2);
-    Bit#(SupLogSize) nextOffset = truncate(infos.nextPc >> 2);
-
-    let no_jump = baseNextPc != lane || offset >= nextOffset;
-
-    let taken =
-      infos.nextPc != lane + fromInteger(4*supSize) &&
-      (no_jump);
-
-    if (kind == Branch && no_jump) pht.update(lane, ghr, taken, infos.state.state);
-
     numHit <= numHit + 1;
   endmethod
 
@@ -374,8 +359,7 @@ module mkBranchPredictor(BranchPred);
       infos.nextPc != lane + fromInteger(4*supSize) &&
       (baseNextPc != lane || offset >= nextOffset);
 
-    if (kind == Branch)
-      pht.update(lane, ghr, taken, infos.state.state);
+    if (kind == Branch) pht.update(lane, ghr, taken, infos.state.state);
 
     History newGhr = {truncate(ghr), taken ? 1'b1 : 1'b0};
 
