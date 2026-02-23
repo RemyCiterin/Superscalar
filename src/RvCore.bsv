@@ -354,7 +354,6 @@ module mkCPU(CpuIfc);
     Bool stop = False;
     Bool useMem = False;
     Bool useSys = False;
-    Bool trainHit = True;
     Bit#(32) currentPc = commitPc;
     Bit#(32) instrCounter = instret;
     Super#(Bool) consumed = replicate(False);
@@ -454,21 +453,10 @@ module mkCPU(CpuIfc);
             );
 
             epoch <= epoch + 1;
-            trainHit = False;
             flush = True;
           end
         end
       end
-    end
-
-    if (trainHit) begin
-      fetch.trainHit(BranchPredTrain{
-        instrs: Valid(commitBuffer.instr),
-        state: commitBuffer.bstate,
-        nextPc: currentPc,
-        mask: consumed,
-        pc: commitPc
-      });
     end
 
     forwardProgess <= consumed == replicate(False) ? forwardProgess+1 : 0;

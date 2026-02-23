@@ -26,7 +26,6 @@ interface FetchIfc;
   method Action redirect(Bit#(32) pc, Epoch newEpoch);
 
   method Action trainMis(BranchPredTrain infos);
-  method Action trainHit(BranchPredTrain infos);
 
   interface TLMaster#(32, 32, 8, 8, 0) master;
 
@@ -124,7 +123,6 @@ module mkFetch(FetchIfc);
   endmethod
 
   method trainMis = bpred.trainMis;
-  method trainHit = bpred.trainHit;
 
   method stats = icache.stats;
 endmodule

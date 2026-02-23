@@ -274,7 +274,6 @@ interface BranchPred;
 
   method ActionValue#(Tuple3#(Bit#(32), Bit#(SupLogSize), BranchPredState)) doPred;
 
-  method Action trainHit(BranchPredTrain infos);
   method Action trainMis(BranchPredTrain infos);
 
   (* always_ready *) method Bit#(32) numMisPred;
@@ -286,7 +285,6 @@ module mkBranchPredictor(BranchPred);
   let pht <- mkPatternHistoryTable;
   let ras <- mkReturnAddressStack;
 
-  Reg#(Bit#(32)) numHit <- mkConfigReg(0);
   Reg#(Bit#(32)) numMis <- mkConfigReg(0);
   Reg#(Bit#(32)) numBtbMis <- mkConfigReg(0);
 
@@ -342,10 +340,6 @@ module mkBranchPredictor(BranchPred);
     );
   endmethod
 
-  method Action trainHit(BranchPredTrain infos);
-    numHit <= numHit + 1;
-  endmethod
-
   method Action trainMis(BranchPredTrain infos);
     let kind = instrKindOpt(infos.instrs);
 
@@ -374,11 +368,6 @@ module mkBranchPredictor(BranchPred);
 
     numMis <= numMis + 1;
 
-    if (numMis[10:0] == 0) begin
-      $display(
-        "hit: %d mis: %d btb mis: %d",
-        numHit, numMis, numBtbMis
-      );
-    end
+    if (numMis[10:0] == 0) $display( "mis: %d btb mis: %d", numMis, numBtbMis );
   endmethod
 endmodule
