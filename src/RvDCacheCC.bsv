@@ -438,8 +438,7 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   // Enter a new request to the cache
   ////////////////////////////////////////////////////////////////////////////
   method Bool canLookup = state[1] == Idle && !canProbe;
-  method Action lookup(DCacheReq req)
-    if (state[1] == Idle && (reservationCounter[1] != 0 || !queueB.canDeq));
+  method Action lookup(DCacheReq req) if (state[1] == Idle && !canProbe);
 
     Physical phys = unpack(req.address);
     randomWay <= randomWay + 1;

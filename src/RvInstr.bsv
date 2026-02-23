@@ -47,6 +47,7 @@ typedef enum {
   Bgeu,
   Load,
   Store,
+  Fence,
 
   // M
   Div,
@@ -85,7 +86,20 @@ typedef enum {
   // Zicsr
   Csrrw,
   Csrrc,
-  Csrrs
+  Csrrs,
+
+  // Amo / Load reserve / Store conditional
+  Loadr,
+  Storec,
+  Amoand,
+  Amoadd,
+  Amoor,
+  Amoxor,
+  Amomin,
+  Amomax,
+  Amominu,
+  Amomaxu,
+  Amoswap
 } Operation deriving(Bits, FShow, Eq);
 
 typedef Bit#(12) CsrId;
@@ -98,6 +112,8 @@ typedef struct {
   ArchReg rs2;
   Bit#(32) imm;
   Bool immValid;
+  Bool isAcquire;
+  Bool isRelease;
   AccessWidth accessWidth;
   Bool isUnsigned;
   Bool isMemAccess;
@@ -110,7 +126,10 @@ function RvInstr decodeRvInstr(Bit#(32) data);
   Operation operation = Err;
   ArchReg rs1 = data[19:15];
   ArchReg rs2 = data[24:20];
+  Bool isMemAccess = False;
   ArchReg rd = data[11:7];
+  Bool isAcquire = False;
+  Bool isRelease = False;
   Bit#(32) imm = ?;
 
   Bit#(3) funct3 = data[14:12];
@@ -119,6 +138,7 @@ function RvInstr decodeRvInstr(Bit#(32) data);
   Bit#(7) opcode = data[6:0];
 
   let itype = case (opcode) matches
+    7'b0001111 : True;
     7'b0000011 : True;
     7'b0010011 : True;
     7'b1100111 : True;
@@ -132,7 +152,7 @@ function RvInstr decodeRvInstr(Bit#(32) data);
     .* : False;
   endcase;
 
-  let rtype = opcode == 7'b0110011;
+  let rtype = opcode == 7'b0110011 || opcode == 7'b0101111;
   let stype = opcode == 7'b0100011;
   let jtype = opcode == 7'b1101111;
   let btype = opcode == 7'b1100011;
@@ -167,12 +187,16 @@ function RvInstr decodeRvInstr(Bit#(32) data);
       {7'b0010011, 7'b0100000, 3'b101, .*} : Sra;
       {7'b0000011, .*, .*} :
         funct3[1:0] == 'b11 || funct3 == 3'b110 ? Err : Load;
+      {7'b0001111, .*, 3'b000, .*} : rd == 0 ? Fence : Err;
       .* : Err;
     endcase;
+
+    if (operation == Load || operation == Fence) isMemAccess = True;
   end
 
   if (stype) begin
     rd = archZero;
+    isMemAccess = True;
     imm = signExtend({data[31:25], data[11:7]});
     operation = funct3[2] == 1 || funct3[1:0] == 'b11 ? Err : Store;
   end
@@ -202,40 +226,60 @@ function RvInstr decodeRvInstr(Bit#(32) data);
   end
 
   if (rtype) begin
-    operation = case (tuple2(funct7, funct3)) matches
-      {7'b0000100, 3'b100} : rs2 == 0 ? Zexth : Err;
-      {7'b0110000, 3'b001} : Rol;
-      {7'b0110000, 3'b101} : Ror;
-      {7'b0000101, 3'b110} : Max;
-      {7'b0000101, 3'b111} : Maxu;
-      {7'b0000101, 3'b100} : Min;
-      {7'b0000101, 3'b101} : Minu;
-      {7'b0100000, 3'b111} : Andn;
-      {7'b0100000, 3'b110} : Orn;
-      {7'b0100000, 3'b100} : Xnor;
-      {7'b0010000, 3'b010} : Sh1add;
-      {7'b0010000, 3'b100} : Sh2add;
-      {7'b0010000, 3'b110} : Sh3add;
-      {7'b0000001, 3'b000} : Mul;
-      {7'b0000001, 3'b001} : Mulh;
-      {7'b0000001, 3'b010} : Mulhsu;
-      {7'b0000001, 3'b011} : Mulhu;
-      {7'b0000001, 3'b100} : Div;
-      {7'b0000001, 3'b101} : Divu;
-      {7'b0000001, 3'b110} : Rem;
-      {7'b0000001, 3'b111} : Remu;
-      {7'b0000000, 3'b000} : Add;
-      {7'b0000000, 3'b010} : Slt;
-      {7'b0000000, 3'b011} : Sltu;
-      {7'b0000000, 3'b111} : And;
-      {7'b0000000, 3'b110} : Or;
-      {7'b0000000, 3'b100} : Xor;
-      {7'b0100000, 3'b000} : Sub;
-      {7'b0000000, 3'b001} : Sll;
-      {7'b0000000, 3'b101} : Srl;
-      {7'b0100000, 3'b101} : Sra;
+    operation = case (tuple3(opcode, funct7, funct3)) matches
+      {7'b0110011, 7'b0000100, 3'b100} : rs2 == 0 ? Zexth : Err;
+      {7'b0110011, 7'b0110000, 3'b001} : Rol;
+      {7'b0110011, 7'b0110000, 3'b101} : Ror;
+      {7'b0110011, 7'b0000101, 3'b110} : Max;
+      {7'b0110011, 7'b0000101, 3'b111} : Maxu;
+      {7'b0110011, 7'b0000101, 3'b100} : Min;
+      {7'b0110011, 7'b0000101, 3'b101} : Minu;
+      {7'b0110011, 7'b0100000, 3'b111} : Andn;
+      {7'b0110011, 7'b0100000, 3'b110} : Orn;
+      {7'b0110011, 7'b0100000, 3'b100} : Xnor;
+      {7'b0110011, 7'b0010000, 3'b010} : Sh1add;
+      {7'b0110011, 7'b0010000, 3'b100} : Sh2add;
+      {7'b0110011, 7'b0010000, 3'b110} : Sh3add;
+      {7'b0110011, 7'b0000001, 3'b000} : Mul;
+      {7'b0110011, 7'b0000001, 3'b001} : Mulh;
+      {7'b0110011, 7'b0000001, 3'b010} : Mulhsu;
+      {7'b0110011, 7'b0000001, 3'b011} : Mulhu;
+      {7'b0110011, 7'b0000001, 3'b100} : Div;
+      {7'b0110011, 7'b0000001, 3'b101} : Divu;
+      {7'b0110011, 7'b0000001, 3'b110} : Rem;
+      {7'b0110011, 7'b0000001, 3'b111} : Remu;
+      {7'b0110011, 7'b0000000, 3'b000} : Add;
+      {7'b0110011, 7'b0000000, 3'b010} : Slt;
+      {7'b0110011, 7'b0000000, 3'b011} : Sltu;
+      {7'b0110011, 7'b0000000, 3'b111} : And;
+      {7'b0110011, 7'b0000000, 3'b110} : Or;
+      {7'b0110011, 7'b0000000, 3'b100} : Xor;
+      {7'b0110011, 7'b0100000, 3'b000} : Sub;
+      {7'b0110011, 7'b0000000, 3'b001} : Sll;
+      {7'b0110011, 7'b0000000, 3'b101} : Srl;
+      {7'b0110011, 7'b0100000, 3'b101} : Sra;
       .* : Err;
     endcase;
+
+    if (opcode == 7'b0101111) begin // Sc/Lr/Amo
+      isMemAccess = True;
+      isAcquire = funct7[1] == 1;
+      isRelease = funct7[0] == 1;
+      operation = case (tuple2(funct7[6:2], funct3)) matches
+        {5'b00010, 3'b010} : rs2 == 0 ? Loadr : Err;
+        {5'b00011, 3'b010} : Storec;
+        {5'b00001, 3'b010} : Amoswap;
+        {5'b00000, 3'b010} : Amoadd;
+        {5'b00100, 3'b010} : Amoxor;
+        {5'b01100, 3'b010} : Amoand;
+        {5'b01000, 3'b010} : Amoor;
+        {5'b10000, 3'b010} : Amomin;
+        {5'b10100, 3'b010} : Amomax;
+        {5'b11000, 3'b010} : Amominu;
+        {5'b11100, 3'b010} : Amomaxu;
+        default: Err;
+      endcase;
+    end
   end
 
   if (operation == And && rtype && rs2 == 0) operation = Move;
@@ -254,10 +298,12 @@ function RvInstr decodeRvInstr(Bit#(32) data);
     csr: imm[11:0],
     opcode: operation,
     csrI: funct3[2] == 1,
+    isAcquire: isAcquire,
+    isRelease: isRelease,
+    isMemAccess: isMemAccess,
     accessWidth: funct3[1:0],
     isUnsigned: funct3[2] == 1,
     immValid: utype || stype || itype || jtype || btype,
-    isMemAccess: operation == Load || operation == Store,
     isSystem: operation == Csrrc || operation == Csrrs || operation == Csrrw
   };
 endfunction

@@ -290,7 +290,7 @@ function Bit#(32) revBytes(Bit#(32) x);
 endfunction
 
 typedef struct {
-  Bool store;
+  Operation opcode;
   Bit#(32) val;
   Bit#(32) address;
   AccessWidth width;
@@ -299,7 +299,7 @@ typedef struct {
 
 function LsuRequest getLsuRequest(AluRequest req);
   return LsuRequest{
-    store: req.instr.opcode == Store,
+    opcode: req.instr.opcode,
     address: req.rs1 + req.instr.imm,
     isUnsigned: req.instr.isUnsigned,
     width: req.instr.accessWidth,

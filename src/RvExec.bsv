@@ -185,12 +185,34 @@ module mkLsu(LsuIfc);
         pc2 <= pc1;
 
         let req = getLsuRequest(request1);
+
+        DCacheOpcode opcode = case (req.opcode) matches
+          Storec : Sc;
+          Fence : Ld;
+          Loadr : Lr;
+          Store : St;
+          Load : Ld;
+          default : Amo;
+        endcase;
+
+        DCacheAmo amo = case (req.opcode) matches
+          Amominu : Minu;
+          Amomaxu : Maxu;
+          Amoswap : Swap;
+          Amomin : Min;
+          Amomax : Max;
+          Amoand : And;
+          Amoxor : Xor;
+          Amoadd : Add;
+          Amoor : Or;
+        endcase;
+
         cache.lookup(DCacheReq{
-          opcode: req.store ? St : Ld,
+          opcode: opcode,
           mask: lsuRequestMask(req),
           data: lsuRequestData(req),
           address: req.address,
-          amo: ?
+          amo: amo
         });
 
         request2 <= req;
@@ -213,7 +235,9 @@ module mkLsu(LsuIfc);
         if (commit) valid3[1] <= True;
 
         cache.deq(commit);
-        if (commit && request2.store && request2.address == 'h10000000 && mask[0] == 1) begin
+
+        Bool isUart = request2.opcode == Store && request2.address == 'h10000000 && mask[0] == 1;
+        if (commit && isUart) begin
           //$write("%c", data[7:0]);
           txUart.put(data[7:0]);
           $fflush(stdout);
