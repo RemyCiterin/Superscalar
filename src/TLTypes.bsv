@@ -216,14 +216,14 @@ typedef struct {
   Bit#(addrW) address;
   Bit#(TDiv#(dataW,8)) mask;
   Bit#(dataW) data;
-} ChannelA#(`TL_ARGS_DECL) deriving(Bits, FShow, Eq);
+} ChannelA#(`TL_ARGS_DECL) deriving(Bits, Eq);
 
 typedef struct {
   OpcodeB opcode;
   Bit#(sizeW) size;
   Bit#(sourceW) source;
   Bit#(addrW) address;
-} ChannelB#(`TL_ARGS_DECL) deriving(Bits, FShow, Eq);
+} ChannelB#(`TL_ARGS_DECL) deriving(Bits, Eq);
 
 typedef struct {
   OpcodeC opcode;
@@ -231,7 +231,7 @@ typedef struct {
   Bit#(sourceW) source;
   Bit#(addrW) address;
   Bit#(dataW) data;
-} ChannelC#(`TL_ARGS_DECL) deriving(Bits, FShow, Eq);
+} ChannelC#(`TL_ARGS_DECL) deriving(Bits, Eq);
 
 typedef struct {
   OpcodeD opcode;
@@ -239,12 +239,12 @@ typedef struct {
   Bit#(sourceW) source;
   Bit#(sinkW) sink;
   Bit#(dataW) data;
-} ChannelD#(`TL_ARGS_DECL) deriving(Bits, FShow, Eq);
+} ChannelD#(`TL_ARGS_DECL) deriving(Bits, Eq);
 
 typedef struct {
   OpcodeE opcode;
   Bit#(sinkW) sink;
-} ChannelE#(`TL_ARGS_DECL) deriving(Bits, FShow, Eq);
+} ChannelE#(`TL_ARGS_DECL) deriving(Bits, Eq);
 
 interface TLSlave#(`TL_ARGS_DECL);
   interface FifoI#(ChannelA#(`TL_ARGS)) channelA;
@@ -307,6 +307,76 @@ endfunction
 function Bool hasDataE(OpcodeE opcode);
   return False;
 endfunction
+
+instance FShow#(ChannelA#(`TL_ARGS));
+  function Fmt fshow(ChannelA#(`TL_ARGS) msg);
+    if (hasDataA(msg.opcode)) begin
+      return
+        $format(
+          fshow(msg.opcode), " { addr: 0x%h, source: 0x%h, size: 0x%h, mask: 0x%h, data: 0x%h }",
+          msg.address, msg.source, msg.size, msg.mask, msg.data
+        );
+    end else begin
+      return
+        $format(
+          fshow(msg.opcode), " { addr: 0x%h, source: 0x%h, size: 0x%h }",
+          msg.address, msg.source, msg.size
+        );
+    end
+  endfunction
+endinstance
+
+instance FShow#(ChannelB#(`TL_ARGS));
+  function Fmt fshow(ChannelB#(`TL_ARGS) msg);
+    return
+      $format(
+        fshow(msg.opcode), " { addr: 0x%h, source: 0x%h, size: 0x%h }",
+        msg.address, msg.source, msg.size
+      );
+  endfunction
+endinstance
+
+instance FShow#(ChannelC#(`TL_ARGS));
+  function Fmt fshow(ChannelC#(`TL_ARGS) msg);
+    if (hasDataC(msg.opcode)) begin
+      return
+        $format(
+          fshow(msg.opcode), " { addr: 0x%h, source: 0x%h, size: 0x%h, data: 0x%h }",
+          msg.address, msg.source, msg.size, msg.data
+        );
+    end else begin
+      return
+        $format(
+          fshow(msg.opcode), " { addr: 0x%h, source: 0x%h, size: 0x%h }",
+          msg.address, msg.source, msg.size
+        );
+    end
+  endfunction
+endinstance
+
+instance FShow#(ChannelD#(`TL_ARGS));
+  function Fmt fshow(ChannelD#(`TL_ARGS) msg);
+    if (hasDataD(msg.opcode)) begin
+      return
+        $format(
+          fshow(msg.opcode), " { source: 0x%h, sink: 0x%h, size: 0x%h, data: 0x%h }",
+          msg.source, msg.sink, msg.size, msg.data
+        );
+    end else begin
+      return
+        $format(
+          fshow(msg.opcode), " { source: 0x%h, sink: 0x%h, size: 0x%h }",
+          msg.source, msg.sink, msg.size
+        );
+    end
+  endfunction
+endinstance
+
+instance FShow#(ChannelE#(`TL_ARGS));
+  function Fmt fshow(ChannelE#(`TL_ARGS) msg);
+    return $format(fshow(msg.opcode), " { sink: 0x%h }", msg.sink);
+  endfunction
+endinstance
 
 typedef Vector#(n,TLSlave#(`TL_ARGS)) VecTLSlave#(numeric type n,`TL_ARGS_DECL);
 
