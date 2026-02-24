@@ -1,0 +1,39 @@
+[target.riscv32ima-unknown-none-elf]
+runner = [
+    "qemu-system-riscv32",
+    "-M", "virt",
+    "-serial", "stdio",
+    "-display", "none",
+    "-m", "32M",
+    "-smp", "1",
+    "-bios", "none",
+
+
+    #"-machine", "virt",
+    #"-cpu", "rv64",
+    #"-d", "int,guest_errors,unimp",
+    #"-smp", "1",
+    #"-m", "128M",
+    #"-serial", "mon:stdio",
+    #"-nographic",
+    #"-append", "loglevel=trace",
+    # "-device", "virtio-rng-device",
+    # "-device", "virtio-gpu-device",
+    # "-device", "virtio-net-device",
+    # "-device", "virtio-tablet-device",
+    # "-device", "virtio-keyboard-device",
+    # "-s", "-S",
+    "-kernel"
+]
+rustflags = [
+    "-C", "link-arg=-Tsrc/linker.ld",
+    "-C", "opt-level=2",
+    # "-C", "target-feature=+zicbom",
+    # "-C", "target-feature=+f",
+]
+
+[build]
+target = "riscv32ima-unknown-none-elf.json"
+
+[unstable]
+build-std = ["core", "alloc"]
