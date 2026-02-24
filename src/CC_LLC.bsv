@@ -18,7 +18,7 @@ typedef 32 AddrW;   // Width (in bits) of the tilelink "address" field
 typedef 8 SourceW;  // Width (in bits) of the tilelink "source" field
 typedef 8 SinkW;    // Width (in bits) of the tilelink "sink" field
 typedef 8 SizeW;    // Width (in bits) of the tilelink "size" field
-typedef 1 NCache;   // Number of higher level caches to track
+typedef 2 NCache;   // Number of higher level caches to track
 
 Bool debug = False;
 
@@ -96,14 +96,14 @@ module mkLLC#(Vector#(NCache, Bit#(SourceW)) sources) (LLC);
   // Schedule probe requests
   ///////////////////////////////////////////////////////////////////////////////////////
   RegFile#(Transaction, Bit#(AddrW)) probeAddr <- mkRegFileFull;
-  RegFile#(Transaction, Cap) probeCap <- mkRegFileFull;
+  RegFile#(Transaction, OpcodeB) probeOpcode <- mkRegFileFull;
   ProbeScheduler probes <- mkProbeScheduler;
 
   rule schedule_probe;
     match {.tr, .id} <- probes.scheduler;
     sourceB.enq(ChannelB{
       size: fromInteger(valueof(TLog#(TDiv#(LineW,8)))),
-      opcode: ProbeBlock(probeCap.sub(tr)),
+      opcode: probeOpcode.sub(tr),
       address: probeAddr.sub(tr),
       source: sources[id]
     });
@@ -111,7 +111,7 @@ module mkLLC#(Vector#(NCache, Bit#(SourceW)) sources) (LLC);
     if (debug) begin
       $display("send: ", fshow((ChannelB#(`TL_LLC))'(ChannelB{
         size: fromInteger(valueof(TLog#(TDiv#(LineW,8)))),
-        opcode: ProbeBlock(probeCap.sub(tr)),
+        opcode: probeOpcode.sub(tr),
         address: probeAddr.sub(tr),
         source: sources[id]
       })));
@@ -299,9 +299,10 @@ module mkLLC#(Vector#(NCache, Bit#(SourceW)) sources) (LLC);
 
     CacheID id = ?;
 
+    if (reduce != TtoT) payload.exclusive = False;
+
     for (Integer i=0; i < valueof(NCache); i = i + 1) if (sources[i] == request.source) begin
       if (reduce == TtoN || reduce == BtoN || reduce == NtoN) payload.owners[i] = 0;
-      //if (reduce == TtoN || reduce == BtoN) payload.owners[i] = 0;
       id = fromInteger(i);
     end
 
@@ -383,9 +384,9 @@ module mkLLC#(Vector#(NCache, Bit#(SourceW)) sources) (LLC);
       //$display("probe before eviction: 0x%h", pack(evictPhys));
       probeAddr.upd(pipeline.transaction, pack(evictPhys));
       probes.enter(phys.set, pipeline.transaction, pipeline.data.owners);
+      probeOpcode.upd(pipeline.transaction, ProbeBlock(N));
       transactions.refillDone(pipeline.transaction);
       transactions.evictDone(pipeline.transaction);
-      probeCap.upd(pipeline.transaction, N);
       pipeline.deq(False, False, ?, ?);
 
     end else if (Valid(phys.tag) != pipeline.tag && pipeline.data.owners == 0) begin
@@ -406,8 +407,8 @@ module mkLLC#(Vector#(NCache, Bit#(SourceW)) sources) (LLC);
       // Probe the others owners of the cache line
 
       //$display("probe: 0x%h", pack(phys));
+      probeOpcode.upd(pipeline.transaction, ProbeBlock(needed == T ? N : B));
       probes.enter(phys.set, pipeline.transaction, other_owners);
-      probeCap.upd(pipeline.transaction, needed == T ? N : B);
       probeAddr.upd(pipeline.transaction, pack(refillPhys));
       transactions.refillDone(pipeline.transaction);
       transactions.evictDone(pipeline.transaction);

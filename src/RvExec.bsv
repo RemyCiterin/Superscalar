@@ -147,7 +147,7 @@ interface LsuIfc;
 endinterface
 
 (* synthesize *)
-module mkLsu(LsuIfc);
+module mkLsu#(Bit#(8) dsource) (LsuIfc);
   Reg#(Bool) valid3[2] <- mkCReg(2, False);
   Reg#(Bit#(32)) value3 <- mkRegU;
 
@@ -157,7 +157,7 @@ module mkLsu(LsuIfc);
 
   TxUART txUart <- mkTxUART(1_000_000 / 115200);
 
-  DCache#(8, 8, 8) cache <- mkDCache(1);
+  DCache#(8, 8, 8) cache <- mkDCache(dsource);
 
   Reg#(CauseException) cause2 <- mkRegU;
   Reg#(LsuRequest) request2 <- mkRegU;

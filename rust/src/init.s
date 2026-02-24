@@ -4,6 +4,9 @@ _start:
   # a0 contains hartid
   # a1 contains device tree
 
+  csrr tp, mhartid
+  bnez tp, .wait_sync
+
   la t0, __bss_start
   la t1, __bss_end
   bgeu t0, t1, .bss_zero_loop_end
@@ -13,18 +16,28 @@ _start:
   bltu t0, t1, .bss_zero_loop
 .bss_zero_loop_end:
 
+  la t0, sync
+  sw zero, (t0)
+  slli t0, tp, 12 // 4096 * hart
   la sp, stack_top
+  sub sp, sp, t0
   jal machine_main
 .infinite_loop:
   j .infinite_loop
 
-// .section .data
-// .align 10
-// user_binary:
-//   .incbin "user.bin"
+.wait_sync:
+  la t0, sync
+  lw t0, (t0)
+  bnez t0, .wait_sync
+  j .bss_zero_loop_end
 
 .section .bss
 .align 4
-  .skip 0x4000
+  .skip 0x8000
 stack_top:
   .skip 0x4000
+
+.section .data
+.align 4
+sync:
+  .word 1

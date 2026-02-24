@@ -25,30 +25,80 @@ interface MainIfc;
 endinterface
 
 (* synthesize *)
-module mkSoc(MainIfc);
-  let cpu <- mkCPU();
+module mkMultiSoc(MainIfc);
+  let cpu0 <- mkCPU(0, 0, 1);
+  let cpu1 <- mkCPU(1, 0, 2);
 
   Integer memSize = 'hFFFFFFF;
 
   BRAM_PORT_BE#(Bit#(32), Bit#(256), 32) dmem <-
     mkBRAMCore1BELoad(memSize, False, "Mem256.mem", False);
   TLSlave#(32, 256, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
-  let llc <- mkLLC(vec(1));
-  mkIncreaseWidth(True, cpu.dmaster, llc.slave);
+  let llc <- mkLLC(vec(1, 2));
+
+  function rootSource(Bit#(8) src) = src == 1 ? 0 : 1;
+  function rootSink(_) = 0;
+  function rootAddr(_) = 0;
+
+  let conf = XBarConf{
+    bce: True,
+    rootSource: rootSource,
+    rootSink: rootSink,
+    rootAddr: rootAddr
+  };
+  XBar#(1, 2, 32, 256, 8, 8, 8) xbar <- mkXBar(conf);
+
   mkConnection(llc.master, dslave);
+  mkConnection(xbar.masters[0], llc.slave);
+  mkIncreaseWidth(True, cpu0.dmaster, xbar.slaves[0]);
+  mkIncreaseWidth(True, cpu1.dmaster, xbar.slaves[1]);
 
   //BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
   //  mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
   //TLSlave#(32, 32, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
-  //mkConnection(cpu.dmaster, dslave);
+  //mkConnection(cpu0.dmaster, dslave);
 
-  BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) imem <-
+  BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) imem1 <-
     mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
-  TLSlave#(32, 32, 8, 8, 0) islave <- mkTLBram('h80000000, fromInteger(memSize), imem);
-  mkConnection(cpu.imaster, islave);
+  TLSlave#(32, 32, 8, 8, 0) islave1 <- mkTLBram('h80000000, fromInteger(memSize), imem1);
+  BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) imem0 <-
+    mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
+  TLSlave#(32, 32, 8, 8, 0) islave0 <- mkTLBram('h80000000, fromInteger(memSize), imem0);
+  mkConnection(cpu1.imaster, islave1);
+  mkConnection(cpu0.imaster, islave0);
 
 
-  method transmit = cpu.transmit;
+  method transmit = cpu0.transmit;
+endmodule
+
+(* synthesize *)
+module mkSoc(MainIfc);
+  let ifc <- mkMultiSoc;
+  return ifc;
+
+  //let cpu0 <- mkCPU(0, 0, 1);
+
+  //Integer memSize = 'hFFFFFFF;
+
+  //BRAM_PORT_BE#(Bit#(32), Bit#(256), 32) dmem <-
+  //  mkBRAMCore1BELoad(memSize, False, "Mem256.mem", False);
+  //TLSlave#(32, 256, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
+  //let llc <- mkLLC(vec(1));
+  //mkIncreaseWidth(True, cpu0.dmaster, llc.slave);
+  //mkConnection(llc.master, dslave);
+
+  ////BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
+  ////  mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
+  ////TLSlave#(32, 32, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
+  ////mkConnection(cpu0.dmaster, dslave);
+
+  //BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) imem <-
+  //  mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
+  //TLSlave#(32, 32, 8, 8, 0) islave <- mkTLBram('h80000000, fromInteger(memSize), imem);
+  //mkConnection(cpu0.imaster, islave);
+
+
+  //method transmit = cpu0.transmit;
 endmodule
 
 module mkSocSim(Empty);

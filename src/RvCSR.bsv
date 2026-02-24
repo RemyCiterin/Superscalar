@@ -227,8 +227,8 @@ module mkCsrUnit#(List#(CsrIfc) csrs) (CsrUnitIfc);
   Operation opcode = instr.opcode;
   CsrId csr = instr.csr;
 
-  let doRead = opcode == Csrrw ? instr.rd == 0 : True;
-  let doWrite = opcode == Csrrc || opcode == Csrrs ? instr.rs1 == 0 : True;
+  let doRead = opcode == Csrrw ? instr.rd != 0 : True;
+  let doWrite = opcode == Csrrc || opcode == Csrrs ? instr.rs1 != 0 : True;
   let readOnly = isReadOnlyCsr(csr);
 
   let legal = !(readOnly && doWrite) && priv >= minPrivCsr(csr);
@@ -276,6 +276,12 @@ module mkCsrUnit#(List#(CsrIfc) csrs) (CsrUnitIfc);
 
     valid[0] <= False;
   endmethod
+endmodule
+
+module mkMHartIdCsr#(Bit#(32) hart) (List#(CsrIfc));
+  return lst(
+    readOnlyCsr(hart, 'hf14)
+  );
 endmodule
 
 module mkCycleCsr(List#(CsrIfc));

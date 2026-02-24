@@ -35,14 +35,14 @@ interface FetchIfc;
 endinterface
 
 (* synthesize *)
-module mkFetch(FetchIfc);
+module mkFetch#(Bit#(8) isource) (FetchIfc);
   Reg#(Epoch) nextEpoch[3] <- mkCReg(3, 0);
   Reg#(Bit#(32)) nextPc[3] <- mkCReg(3, 'h80000000);
   Reg#(Bit#(32)) uid <- mkReg(0);
 
   Bool bpredEnabled = True;
 
-  ICache#(8, 8) icache <- mkICache(0);
+  ICache#(8, 8) icache <- mkICache(isource);
 
   Fifo#(1, Tuple2#(Bit#(32), Epoch)) queue <- mkPipelineFifo;
 

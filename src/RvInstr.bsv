@@ -387,6 +387,18 @@ function Action displayRvInstr(RvInstr instr);
       Bltu : $write("bltu ", rs1, ", ", rs2, ", ", sxi);
       Bge : $write("bge ", rs1, ", ", rs2, ", ", sxi);
       Bgeu : $write("bgeu ", rs1, ", ", rs2, ", ", sxi);
+      Loadr : $write("lr.w ", rd, ", (", rs1, ")");
+      Storec : $write("lr.w ", rd, ", ", rs2, ", (", rs1, ")");
+      Amoor : $write("amoor ", rd, ", ", rs2, ", (", rs1, ")");
+      Amoand : $write("amoand ", rd, ", ", rs2, ", (", rs1, ")");
+      Amoxor : $write("amoxor ", rd, ", ", rs2, ", (", rs1, ")");
+      Amoadd : $write("amoadd ", rd, ", ", rs2, ", (", rs1, ")");
+      Amomin : $write("amomin ", rd, ", ", rs2, ", (", rs1, ")");
+      Amomax : $write("amomax ", rd, ", ", rs2, ", (", rs1, ")");
+      Amominu : $write("amominu ", rd, ", ", rs2, ", (", rs1, ")");
+      Amomaxu : $write("amomaxu ", rd, ", ", rs2, ", (", rs1, ")");
+      Amoswap : $write("amoswap ", rd, ", ", rs2, ", (", rs1, ")");
+      Fence : $write("fence");
       Load : begin
         case (tuple2(instr.isUnsigned, instr.accessWidth)) matches
           {False, 2'b00} : $write("lb ", rd, ", ", si, "(", rs1, ")");

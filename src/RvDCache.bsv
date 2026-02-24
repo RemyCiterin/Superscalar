@@ -231,14 +231,14 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   if (useCoherency) rule probe_lookup if (canProbe);
     Physical phys = unpack(queueB.first.address);
 
-    Way w = randomWay;
     TLPerm perm = N;
+    Way w = ?;
 
     for (Integer i=0; i < ways; i = i + 1) begin
       TLPerm p <- permRams[i].readPorts[0].request(phys.index);
       Tag t <- tagRams[i].readPorts[0].request(phys.index);
 
-      if (t == phys.tag) begin
+      if (t == phys.tag && p != N) begin
         w = fromInteger(i);
         perm = p;
       end
@@ -268,11 +268,14 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
       {B, N} : tuple3(TLPerm'(N), ProbeAckData(BtoN), True);
       {T, T} : tuple3(TLPerm'(T), ProbeAck(TtoT), False);
       {D, T} : tuple3(TLPerm'(D), ProbeAck(TtoT), False);
+      {B, T} : tuple3(TLPerm'(B), ProbeAck(BtoB), False);
       {B, B} : tuple3(TLPerm'(B), ProbeAck(BtoB), False);
+      {N, T} : tuple3(TLPerm'(N), ProbeAck(NtoN), False);
+      {N, B} : tuple3(TLPerm'(N), ProbeAck(NtoN), False);
       {N, N} : tuple3(TLPerm'(N), ProbeAck(NtoN), False);
     endcase;
 
-    permRams[probe_way].writePorts[0].request(probe_phys.index, new_perm);
+    if (probe_perm != N) permRams[probe_way].writePorts[0].request(probe_phys.index, new_perm);
     probe_opcode <= opcode;
 
     if (evict) begin

@@ -2,6 +2,7 @@ import MultiRegFile :: *;
 import RvBranchPred :: *;
 import ForwardBRAM :: *;
 import BuildVector :: *;
+import BuildList :: *;
 import ConfigReg :: *;
 import BRAMCore :: *;
 import RvDCache :: *;
@@ -38,7 +39,7 @@ typedef struct {
 } ExecEntry deriving(Bits);
 
 (* synthesize *)
-module mkCPU(CpuIfc);
+module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource) (CpuIfc);
   Bool debug = False;
   Bool logTrace = False;
   Bool useLateIssue = True;
@@ -60,8 +61,9 @@ module mkCPU(CpuIfc);
   // Define system registers
   ////////////////////////////////////////////////////////////////////////////
   let cycleCsr <- mkCycleCsr;
+  let hartCsr <- mkMHartIdCsr(hart);
   let instrCsr <- mkInstructionCounterCsr;
-  let system <- mkCsrUnit(List::append(cycleCsr, instrCsr.csrs));
+  let system <- mkCsrUnit(List::concat(lst(cycleCsr, instrCsr.csrs, hartCsr)));
   Reg#(AluRequest) csrExec2 <- mkRegU;
   Reg#(Bit#(32)) csrExec3 <- mkRegU;
 
@@ -86,7 +88,7 @@ module mkCPU(CpuIfc);
   ////////////////////////////////////////////////////////////////////////////
   Reg#(Tuple3#(Bit#(32), Epoch, BranchPredTrain)) redirectData <- mkRegU;
   Reg#(Bool) redirectState <- mkReg(False);
-  FetchIfc fetch <- mkFetch;
+  FetchIfc fetch <- mkFetch(isource);
   DecodeIfc decode <- mkDecode;
 
   ////////////////////////////////////////////////////////////////////////////
@@ -102,7 +104,7 @@ module mkCPU(CpuIfc);
   ////////////////////////////////////////////////////////////////////////////
   Vector#(SupSize, ExecIfc#(1)) alu <- replicateM(mkExecAlu(useLateIssue));
 
-  let lsu_ifc <- mkLsu;
+  let lsu_ifc <- mkLsu(dsource);
   let uart = lsu_ifc.transmit;
   let lsu = lsu_ifc.exec;
 
@@ -322,7 +324,7 @@ module mkCPU(CpuIfc);
         end
 
         if (debug && rd != 0) begin
-          $display("        ", showReg(rd), " <= %h", result);
+          $display("        ", hart, ":", showReg(rd), " <= %h", result);
         end
 
         if (logTrace) $fdisplay(trace_file, "C=%d", cycle);
@@ -403,7 +405,7 @@ module mkCPU(CpuIfc);
         if (!flush) instrCounter = instrCounter + 1;
 
         if (debug) begin
-          $write(cycle, " commit 0x%h: ", pc);
+          $write(cycle, " %d commit 0x%h: ", hart, pc);
           displayRvInstr(instr); $display("");
         end
 
@@ -439,7 +441,7 @@ module mkCPU(CpuIfc);
         // Misprediction: redirect pipeline
         if (!flush) begin
           if (exception || nextPc != commitBuffer.bprediction[i]) begin
-            if (debug) $display("          redirect from 0x%h to 0x%h", pc, nextPc);
+            if (debug) $display("           %d redirect from 0x%h to 0x%h", hart, pc, nextPc);
 
             redirectState <= True;
             redirectData <= tuple3(

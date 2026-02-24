@@ -19,8 +19,8 @@ use core::{
     panic::PanicInfo,
 };
 
-// use riscv::register;
-use spinning_top::RwSpinlock;
+use riscv::register;
+//use spinning_top::RwSpinlock;
 use spinning_top::Spinlock;
 
 global_asm!(include_str!("init.s"));
@@ -31,17 +31,37 @@ fn panic(info: &PanicInfo) -> ! {
     loop {}
 }
 
+use alloc::vec::Vec;
+
+use lazy_static::lazy_static;
+
+lazy_static!{
+    static ref START : Spinlock<bool> = Spinlock::new(false);
+    static ref VECTOR: Spinlock<Vec<usize>> = Spinlock::new(vec![]);
+}
+
+//static mut START: Spinlock<bool> = Spinlock::new(false);
+
 /// Main program function
 #[no_mangle]
 unsafe extern "C" fn machine_main() -> () {
     // Initialize kernel allocator
-    kalloc::init();
+    let tp = register::mhartid::read();
+    if tp == 0 {
+        kalloc::init();
+        *START.lock() = true;
+    }
 
-    use alloc::vec::Vec;
+    while !*START.lock() {}
 
-    let vector: Spinlock<Vec<usize>> = Spinlock::new(vec![]);
-    vector.lock().push(42);
+    VECTOR.lock().push(42);
 
-    println!("vector[0] = {}", vector.lock()[0]);
+    {
+        let guard = VECTOR.lock();
+        println!("vector[0] = {:?}", guard);
+        println!("{}", tp);
+        println!();
+        drop(guard);
+    }
     loop {}
 }
