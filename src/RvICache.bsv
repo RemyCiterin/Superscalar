@@ -25,6 +25,7 @@ interface ICache#(numeric type sizeW, numeric type sourceW);
   method Action lookup(Bit#(32) addr);
 
   (* always_ready *) method Bool valid;
+  (* always_ready *) method Bit#(32) lane;
   (* always_ready *) method Super#(Bit#(32)) response;
   method Action deq;
 
@@ -174,6 +175,8 @@ module mkICache#(Bit#(sourceW) source) (ICache#(sizeW, sourceW));
   endmethod
 
   method Bool valid = state[0] == Lookup && hit;
+
+  method Bit#(32) lane = pack(physical);
 
   method Action deq if (state[0] == Lookup && hit);
     state[0] <= Idle;

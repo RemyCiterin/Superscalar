@@ -238,8 +238,8 @@ module mkLsu#(Bit#(8) dsource) (LsuIfc);
 
         Bool isUart = request2.opcode == Store && request2.address == 'h10000000 && mask[0] == 1;
         if (commit && isUart) begin
-          //$write("%c", data[7:0]);
-          txUart.put(data[7:0]);
+          $write("%c", data[7:0]);
+          //txUart.put(data[7:0]);
           $fflush(stdout);
         end
       endmethod

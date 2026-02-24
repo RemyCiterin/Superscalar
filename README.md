@@ -38,7 +38,7 @@ A superscalar RISC-V CPU implementing rv32-im supporting Tiny Coupled memories.
 
 ## Performances
 
-Current score is around 4.8 CoreMark/MHz with 2 issues per cycle and using two late-alus.
+Current score is around 5.15 CoreMark/MHz with 2 issues per cycle and using two late-alus.
 
 ## Experiments
 

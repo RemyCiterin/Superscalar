@@ -68,32 +68,32 @@ endmodule
 
 (* synthesize *)
 module mkSoc(MainIfc);
-  let ifc <- mkMultiSoc;
-  return ifc;
+  //let ifc <- mkMultiSoc;
+  //return ifc;
 
-  //let cpu0 <- mkCPU(0, 0, 1);
+  let cpu0 <- mkCPU(0, 0, 1);
 
-  //Integer memSize = 'hFFFFFFF;
+  Integer memSize = 'hFFFFFFF;
 
-  //BRAM_PORT_BE#(Bit#(32), Bit#(256), 32) dmem <-
-  //  mkBRAMCore1BELoad(memSize, False, "Mem256.mem", False);
-  //TLSlave#(32, 256, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
-  //let llc <- mkLLC(vec(1, -1));
-  //mkIncreaseWidth(True, cpu0.dmaster, llc.slave);
-  //mkConnection(llc.master, dslave);
+  BRAM_PORT_BE#(Bit#(32), Bit#(256), 32) dmem <-
+    mkBRAMCore1BELoad(memSize, False, "Mem256.mem", False);
+  TLSlave#(32, 256, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
+  let llc <- mkLLC(vec(1, -1));
+  mkIncreaseWidth(True, cpu0.dmaster, llc.slave);
+  mkConnection(llc.master, dslave);
 
-  ////BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
-  ////  mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
-  ////TLSlave#(32, 32, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
-  ////mkConnection(cpu0.dmaster, dslave);
-
-  //BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) imem <-
+  //BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
   //  mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
-  //TLSlave#(32, 32, 8, 8, 0) islave <- mkTLBram('h80000000, fromInteger(memSize), imem);
-  //mkConnection(cpu0.imaster, islave);
+  //TLSlave#(32, 32, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
+  //mkConnection(cpu0.dmaster, dslave);
+
+  BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) imem <-
+    mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
+  TLSlave#(32, 32, 8, 8, 0) islave <- mkTLBram('h80000000, fromInteger(memSize), imem);
+  mkConnection(cpu0.imaster, islave);
 
 
-  //method transmit = cpu0.transmit;
+  method transmit = cpu0.transmit;
 endmodule
 
 module mkSocSim(Empty);

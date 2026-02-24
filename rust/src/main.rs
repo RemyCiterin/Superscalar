@@ -20,7 +20,7 @@ use core::{
 };
 
 use riscv::register;
-//use spinning_top::RwSpinlock;
+use spinning_top::RwSpinlock;
 use spinning_top::Spinlock;
 
 global_asm!(include_str!("init.s"));
@@ -40,7 +40,7 @@ lazy_static!{
     // Control if the shared ressources has been initialized, thread 0 is in charge of it
     static ref START : AtomicBool = AtomicBool::new(false);
 
-    static ref VECTOR: Spinlock<Vec<usize>> = Spinlock::new(vec![]);
+    static ref VECTOR: RwSpinlock<Vec<usize>> = RwSpinlock::new(vec![]);
 }
 
 /// Main program function
@@ -61,17 +61,15 @@ unsafe extern "C" fn machine_main() -> () {
 
     let mut cycle = register::mcycle::read();
     let mut instr = register::minstret::read();
-    VECTOR.lock().push(42);
+    VECTOR.write().push(42);
 
     {
-        let guard = VECTOR.lock();
+        let guard = VECTOR.read();
         println!("vector[0] = {:?}", guard);
         cycle = register::mcycle::read() - cycle;
         instr = register::minstret::read() - instr;
         println!("{} cycle: {} instr: {}", tp, cycle, instr);
         println!();
-
-        for _ in 0..10000 { asm!("nop"); }
 
         drop(guard);
     }
