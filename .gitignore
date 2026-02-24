@@ -1,7 +1,7 @@
 bsim
 build
 rtl
-elf_to_hex
+elf_to_hex/elf_to_hex_*
 rust/target
 rust/firmware.asm
 Mem*.hex
