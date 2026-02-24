@@ -63,5 +63,6 @@ unsafe extern "C" fn machine_main() -> () {
         println!();
         drop(guard);
     }
+
     loop {}
 }

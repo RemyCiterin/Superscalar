@@ -146,7 +146,7 @@ interface DecodeIfc;
 endinterface
 
 (* synthesize *)
-module mkDecode(DecodeIfc);
+module mkDecode#(Bool moveForwarding) (DecodeIfc);
   Fifo#(2, FetchOutput) fifo <- mkFifo;
 
   method Action put(FetchOutput in);
@@ -163,11 +163,25 @@ module mkDecode(DecodeIfc);
     Super#(CauseException) cause = in.cause;
     Super#(Bool) exception = in.exception;
 
-    for (Integer i=0; i < supSize; i = i + 1) begin
+    for (Integer i=0; i < supSize; i = i + 1) if (in.mask[i]) begin
       if (instr[i].opcode == Err && !exception[i]) begin
         cause[i] = IllegalInstruction;
         exception[i] = True;
       end
+    end
+
+    // Move forwarding
+    for (Integer i=0; i < supSize; i = i + 1) if (moveForwarding && in.mask[i]) begin
+      ArchReg rs1 = instr[i].rs1;
+      ArchReg rs2 = instr[i].rs2;
+
+      for (Integer j=0; j < i; j = j + 1) if (in.mask[i-j-1]) begin
+        if (rs1 == instr[i-j-1].rd && instr[i-j-1].opcode == Move) rs1 = instr[i-j-1].rs1;
+        if (rs2 == instr[i-j-1].rd && instr[i-j-1].opcode == Move) rs2 = instr[i-j-1].rs1;
+      end
+
+      instr[i].rs1 = rs1;
+      instr[i].rs2 = rs2;
     end
 
     return Bundle{

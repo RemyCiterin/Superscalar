@@ -53,11 +53,6 @@ module mkMultiSoc(MainIfc);
   mkIncreaseWidth(True, cpu0.dmaster, xbar.slaves[0]);
   mkIncreaseWidth(True, cpu1.dmaster, xbar.slaves[1]);
 
-  //BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
-  //  mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
-  //TLSlave#(32, 32, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
-  //mkConnection(cpu0.dmaster, dslave);
-
   BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) imem1 <-
     mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
   TLSlave#(32, 32, 8, 8, 0) islave1 <- mkTLBram('h80000000, fromInteger(memSize), imem1);
@@ -83,7 +78,7 @@ module mkSoc(MainIfc);
   //BRAM_PORT_BE#(Bit#(32), Bit#(256), 32) dmem <-
   //  mkBRAMCore1BELoad(memSize, False, "Mem256.mem", False);
   //TLSlave#(32, 256, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
-  //let llc <- mkLLC(vec(1));
+  //let llc <- mkLLC(vec(1, -1));
   //mkIncreaseWidth(True, cpu0.dmaster, llc.slave);
   //mkConnection(llc.master, dslave);
 

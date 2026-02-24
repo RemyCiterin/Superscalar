@@ -44,6 +44,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource) (CpuIfc);
   Bool logTrace = False;
   Bool useLateIssue = True;
   Bool useForwarding = True;
+  Bool useMoveForwarding = False;
 
   Reg#(Bit#(32)) cycle <- mkConfigReg(0);
 
@@ -89,7 +90,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource) (CpuIfc);
   Reg#(Tuple3#(Bit#(32), Epoch, BranchPredTrain)) redirectData <- mkRegU;
   Reg#(Bool) redirectState <- mkReg(False);
   FetchIfc fetch <- mkFetch(isource);
-  DecodeIfc decode <- mkDecode;
+  DecodeIfc decode <- mkDecode(useMoveForwarding);
 
   ////////////////////////////////////////////////////////////////////////////
   // Define system registers
