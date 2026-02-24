@@ -299,7 +299,7 @@ module mkCycleCsr(List#(CsrIfc));
 endmodule
 
 interface InstructionCounterIfc;
-  (* always_ready *) method Action incrret;
+  (* always_ready *) method Action incrret(Bit#(64) value);
 
   interface List#(CsrIfc) csrs;
 endinterface
@@ -307,8 +307,8 @@ endinterface
 module mkInstructionCounterCsr(InstructionCounterIfc);
   Reg#(Bit#(64)) counter <- mkConfigReg(0);
 
-  method Action incrret;
-    counter <= counter+1;
+  method Action incrret(Bit#(64) value);
+    counter <= counter + value;
   endmethod
 
   interface csrs = lst(

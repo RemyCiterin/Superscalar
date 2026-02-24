@@ -15,7 +15,7 @@ mod params;
 mod kalloc;
 
 use core::{
-    arch::global_asm,
+    arch::{global_asm, asm},
     panic::PanicInfo,
 };
 
@@ -32,15 +32,16 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use lazy_static::lazy_static;
 
 lazy_static!{
-    static ref START : Spinlock<bool> = Spinlock::new(false);
+    // Control if the shared ressources has been initialized, thread 0 is in charge of it
+    static ref START : AtomicBool = AtomicBool::new(false);
+
     static ref VECTOR: Spinlock<Vec<usize>> = Spinlock::new(vec![]);
 }
-
-//static mut START: Spinlock<bool> = Spinlock::new(false);
 
 /// Main program function
 #[no_mangle]
@@ -48,19 +49,30 @@ unsafe extern "C" fn machine_main() -> () {
     // Initialize kernel allocator
     let tp = register::mhartid::read();
     if tp == 0 {
+        // Init kernel allocator
         kalloc::init();
-        *START.lock() = true;
+
+        // Inform the other threads that they can start
+        START.store(true, Ordering::Release);
     }
 
-    while !*START.lock() {}
+    // Wait until all the shared ressources are initialized
+    while !START.load(Ordering::Acquire) {}
 
+    let mut cycle = register::mcycle::read();
+    let mut instr = register::minstret::read();
     VECTOR.lock().push(42);
 
     {
         let guard = VECTOR.lock();
         println!("vector[0] = {:?}", guard);
-        println!("{}", tp);
+        cycle = register::mcycle::read() - cycle;
+        instr = register::minstret::read() - instr;
+        println!("{} cycle: {} instr: {}", tp, cycle, instr);
         println!();
+
+        for _ in 0..10000 { asm!("nop"); }
+
         drop(guard);
     }
 

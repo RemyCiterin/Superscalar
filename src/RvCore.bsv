@@ -353,10 +353,10 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource) (CpuIfc);
   // in case of an exception/misprediction
   ////////////////////////////////////////////////////////////////////////////
   rule commit if ( commitBuffer.mask != replicate(False) && !redirectState );
-
     Bool stop = False;
     Bool useMem = False;
     Bool useSys = False;
+    Bit#(64) incrInstret = 0;
     Bit#(32) currentPc = commitPc;
     Bit#(32) instrCounter = instret;
     Super#(Bool) consumed = replicate(False);
@@ -404,8 +404,9 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource) (CpuIfc);
         consumed[i] = True;
         commited[i] = !exception && !flush;
         if (!flush) instrCounter = instrCounter + 1;
+        if (!flush) incrInstret = incrInstret + 1;
 
-        if (debug) begin
+        if (debug && !flush) begin
           $write(cycle, " %d commit 0x%h: ", hart, pc);
           displayRvInstr(instr); $display("");
         end
@@ -466,6 +467,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource) (CpuIfc);
     forwardProgess <= consumed == replicate(False) ? forwardProgess+1 : 0;
     wbBuffer.put(commited, ExecEntry{instr: commitBuffer.instr, uid: commitBuffer.uid});
     commitBuffer.consume(consumed);
+    instrCsr.incrret(incrInstret);
     instret <= instrCounter;
     commitPc <= currentPc;
   endrule
