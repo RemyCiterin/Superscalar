@@ -155,11 +155,11 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   ////////////////////////////////////////////////////////////////////////////
   // Load reserve/Store conditional sequence
   ////////////////////////////////////////////////////////////////////////////
-  Reg#(Bit#(8)) reservationCounter[3] <- mkCReg(3, 0);
+  Reg#(Bit#(8)) reservationCounter[2] <- mkCReg(2, 0);
 
   (* fire_when_enabled, no_implicit_conditions *)
   rule decr_reservation_counter;
-    if (reservationCounter[2] != 0) reservationCounter[2] <= reservationCounter[2] - 1;
+    if (reservationCounter[1] != 0) reservationCounter[1] <= reservationCounter[1] - 1;
   endrule
 
   // A cache line is 2**5 = 32 bytes (= 256 bits)
@@ -226,7 +226,7 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   ////////////////////////////////////////////////////////////////////////////
   Bool canProbe =
     queueB.canDeq && reservationCounter[1] == 0 &&
-     (state[1] == Idle || state[1] == Refill);
+      (state[1] == Idle || state[1] == Refill);
 
   if (useCoherency) rule probe_lookup if (canProbe);
     Physical phys = unpack(queueB.first.address);
@@ -244,6 +244,7 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
       end
     end
 
+    cpu_sc_succeded <= False;
     probe_cap <= case (queueB.first.opcode) matches
       tagged ProbeBlock .c : c;
       tagged ProbePerms .c : c;
