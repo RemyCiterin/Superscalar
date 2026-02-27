@@ -27,19 +27,29 @@ A superscalar RISC-V CPU implementing rv32ima_zicsr_zba_zbb supporting cache coh
 
 ## TODO
 
-- Better branch prediction
-- Implement pipelined mul/div/clz/ctz/cpop, currently multiplication is either implemented using a
-    finite-state-machine, either using the DSP of the fpga.
+- Move the late alu after the load-store-unit such that a bundle composed of a memory instruction
+    and a dependent alu instruction can be executed with stall. But this require adding a bigger
+    store-buffer: actually the store-buffer is one cycle because a value can be propagated from the
+    "matching" stage of the data cache to the "lookup" stage, but this add a new commit stage in the
+    cache, one cycle after tag matching.
+- Higher memory throughput/latency, the caches doesn't have prefetchers, reducing the memory
+    throughput. Also the L1 cache buses are 32 bits each, so the 256 bits cache lines requires at
+    least 8 cycles to evict (L1d only) + 8 cycles to refill, so using a wider bus may imrove the
+    latency (so the number of pipeline stalls).
 - Exceptions and interrupts
 - add an MMU/TLB
 - floating points, maybe look at how to to an FMA because the one from bluespec have a very high
     latency
 - `64` bits support
+- Better branch prediction
+- Implement pipelined mul/div/clz/ctz/cpop, currently multiplication is either implemented using a
+    finite-state-machine, either using the DSP of the fpga.
 - Improve critical path (as always)
 
 ## Performances
 
-Current score is around 5.15 CoreMark/MHz with 2 issues per cycle and using two late-alus.
+Current score is around 5.15 CoreMark/MHz with 2 issues per cycle and using two late-alus, but this
+really dependent to compiler options.
 
 ## Experiments
 
