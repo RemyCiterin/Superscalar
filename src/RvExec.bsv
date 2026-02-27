@@ -220,7 +220,8 @@ module mkLsu#(Bit#(8) dsource) (LsuIfc);
     endinterface
 
     interface ExecStage2 exec2;
-      method forward = cache.valid ? Valid(lsuRequestRd(request2, cache.response)) : Invalid;
+      method forward =
+        cache.valid ? Valid(lsuRequestRd(request2, cache.response)) : Invalid;
       method valid = cache.valid && !valid3[1];
 
       method cause = cause2;
