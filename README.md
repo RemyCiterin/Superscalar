@@ -2,7 +2,7 @@
 
 ![pipeline graph](doc/gen_pipeline_graph.svg)
 
-A superscalar RISC-V CPU implementing rv32-im supporting Tiny Coupled memories.
+A superscalar RISC-V CPU implementing rv32ima_zicsr_zba_zbb supporting cache coherency.
 
 # Current state
 
@@ -23,6 +23,7 @@ A superscalar RISC-V CPU implementing rv32-im supporting Tiny Coupled memories.
 - Late ALU support (one per execution lane, like in this
     [article](https://doi.org/10.1109/ICCD.2015.7357163)), doing so the load-to-use latency is one
     cycle, or two for load-to-addrgen
+- Cache coherency using TileLink with a non-blocking last level cache.
 
 ## TODO
 
@@ -30,8 +31,6 @@ A superscalar RISC-V CPU implementing rv32-im supporting Tiny Coupled memories.
 - Implement pipelined mul/div/clz/ctz/cpop, currently multiplication is either implemented using a
     finite-state-machine, either using the DSP of the fpga.
 - Exceptions and interrupts
-- atomic memory operations, opens the door to parallelism
-- cache coherence using TileLink
 - add an MMU/TLB
 - floating points, maybe look at how to to an FMA because the one from bluespec have a very high
     latency
