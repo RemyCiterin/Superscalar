@@ -62,3 +62,40 @@ Also it's not necessary to maintains a state and forward the moves between multi
 the move latency is one cycle.
 But on CoreMark, the performance gain is VERY small (4.173 Coremark/MHz with forwarding and 4.166
 without).
+
+
+### Inclusive Coherent Last Level Cache
+
+
+The last level cache is in charge of ansering requests from higher level agents (typically L1
+caches, memory managment units...), while maintaining the coherency of all the copies of every
+cache lines in the system.
+
+![LLC graph](doc/gen_llc_graph.svg)
+
+The LLC use a common pipeline to access it's internal directory and cache lines.
+- Every incomming message enter the pipeline using it's address: either calculate by reading its
+    address field, or by using the state of current queries. All resources are also allocated here
+    to avoid deadlocks (transaction queue entries..).
+- Then when a message comes out of the pipeline, the changes are applied to the directory and cache
+    lines in the LLC SRAMs.
+
+Thus, for a message from channel A (e.g., refilling a cache line in an L1 cache):
+- We queue it in the pipeline and allocate a new entry in the transaction queue.
+- When we exit the pipeline, we respond and update the directory state if possible.
+- Otherwise, if other copies of the cache line need to be invalidated first, we send invalidation
+    messages to the owners of those copies. Then we retry the request in the pipeline once we have
+    received all the invalidation acknowledgements.
+- If we need to acquire the new cache line, we send a refill request to DRAM, and retry the request
+    once we received a response from DRAM.
+- ...
+
+The transaction queue is responsible for tracking dependencies in pending requests so that they
+are only retried when necessary. In addition, this structure checks that two requests requesting
+similar resources (same cache line) are never made in parallel.
+
+This design may require entering the same L1 cache request up to three times in the pipeline (if
+the copies of an old cache line need to be invalidated and then the new line acquired). However,
+this complexity is mitigated by the fact that these specific cases require a significant amount of
+message exchange anyway. Moreover, this design has the advantage of being relatively simple
+(the consistent LLC is less than 800LOC currently).
