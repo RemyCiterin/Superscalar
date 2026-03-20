@@ -9,3 +9,4 @@ Mem*.mem
 soft/zig-cache
 soft/zig-out
 soft/firmware.asm
+sdr/target

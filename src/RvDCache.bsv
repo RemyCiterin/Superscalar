@@ -16,7 +16,7 @@ export mkDCache;
 
 `include "TL.defines"
 
-Bool useCoherency = True;
+Bool useCoherency = False;
 
 typedef struct {
   Bit#(32) hit;

@@ -78,6 +78,21 @@ rust:
 	riscv32-none-elf-objdump -D rust/target/riscv32ima-unknown-none-elf/release/kernel \
 		> rust/firmware.asm
 
+.PHONY: sdr
+sdr:
+	elf_to_hex/elf_to_hex_32 sdr/target/riscv32ima-unknown-none-elf/release/kernel Mem.mem \
+		> /dev/null
+	elf_to_hex/elf_to_hex_32 sdr/target/riscv32ima-unknown-none-elf/release/kernel Mem32.mem \
+		> /dev/null
+	elf_to_hex/elf_to_hex_64 sdr/target/riscv32ima-unknown-none-elf/release/kernel Mem64.mem \
+		> /dev/null
+	elf_to_hex/elf_to_hex_128 sdr/target/riscv32ima-unknown-none-elf/release/kernel Mem128.mem \
+		> /dev/null
+	elf_to_hex/elf_to_hex_256 sdr/target/riscv32ima-unknown-none-elf/release/kernel Mem256.mem \
+		> /dev/null
+	riscv32-none-elf-objdump -D sdr/target/riscv32ima-unknown-none-elf/release/kernel \
+		> sdr/firmware.asm
+
 .PHONY: coremark
 coremark:
 	make -C coremark compile PORT_DIR=barebones ITERATIONS=10

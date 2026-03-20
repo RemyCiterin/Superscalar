@@ -18,7 +18,7 @@ typedef 32 AddrW;   // Width (in bits) of the tilelink "address" field
 typedef 8 SourceW;  // Width (in bits) of the tilelink "source" field
 typedef 8 SinkW;    // Width (in bits) of the tilelink "sink" field
 typedef 8 SizeW;    // Width (in bits) of the tilelink "size" field
-typedef 2 NCache;   // Number of higher level caches to track
+typedef 4 NCache;   // Number of higher level caches to track
 
 Bool debug = False;
 
@@ -75,14 +75,14 @@ module mkLLC#(Vector#(NCache, Bit#(SourceW)) sources) (LLC);
   Fifo#(2, ChannelA#(`TL_LLC)) sinkA <- mkFifo;
   Fifo#(2, ChannelB#(`TL_LLC)) sourceB <- mkFifo;
   Fifo#(2, ChannelC#(`TL_LLC)) sinkC <- mkFifo;
-  Fifo#(2, ChannelD#(`TL_LLC)) sourceD <- mkFifo;
+  Fifo#(TQ_SIZE, ChannelD#(`TL_LLC)) sourceD <- mkFifo;
   Fifo#(2, ChannelE#(`TL_LLC)) sinkE <- mkFifo;
 
   ///////////////////////////////////////////////////////////////////////////////////////
   // Master bus interface (to memory)
   ///////////////////////////////////////////////////////////////////////////////////////
-  Fifo#(2, ChannelA#(`TL_LLC)) refillBuffer <- mkFifo;
-  Fifo#(2, ChannelA#(`TL_LLC)) evictBuffer <- mkFifo;
+  Fifo#(TQ_SIZE, ChannelA#(`TL_LLC)) refillBuffer <- mkFifo;
+  Fifo#(TQ_SIZE, ChannelA#(`TL_LLC)) evictBuffer <- mkFifo;
   Fifo#(2, ChannelD#(`TL_LLC)) sinkD <- mkFifo;
 
   ///////////////////////////////////////////////////////////////////////////////////////

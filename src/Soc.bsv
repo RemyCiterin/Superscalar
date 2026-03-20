@@ -34,7 +34,7 @@ module mkMultiSoc(MainIfc);
   BRAM_PORT_BE#(Bit#(32), Bit#(256), 32) dmem <-
     mkBRAMCore1BELoad(memSize, False, "Mem256.mem", False);
   TLSlave#(32, 256, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
-  let llc <- mkLLC(vec(1, 2));
+  let llc <- mkLLC(vec(1, 2, -1, -1));
 
   function rootSource(Bit#(8) src) = src == 1 ? 0 : 1;
   function rootSink(_) = 0;
@@ -75,17 +75,17 @@ module mkSoc(MainIfc);
 
   Integer memSize = 'hFFFFFFF;
 
-  BRAM_PORT_BE#(Bit#(32), Bit#(256), 32) dmem <-
-    mkBRAMCore1BELoad(memSize, False, "Mem256.mem", False);
-  TLSlave#(32, 256, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
-  let llc <- mkLLC(vec(1, -1));
-  mkIncreaseWidth(True, cpu0.dmaster, llc.slave);
-  mkConnection(llc.master, dslave);
+  //BRAM_PORT_BE#(Bit#(32), Bit#(256), 32) dmem <-
+  //  mkBRAMCore1BELoad(memSize, False, "Mem256.mem", False);
+  //TLSlave#(32, 256, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
+  //let llc <- mkLLC(vec(1, -1));
+  //mkIncreaseWidth(True, cpu0.dmaster, llc.slave);
+  //mkConnection(llc.master, dslave);
 
-  //BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
-  //  mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
-  //TLSlave#(32, 32, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
-  //mkConnection(cpu0.dmaster, dslave);
+  BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
+    mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
+  TLSlave#(32, 32, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
+  mkConnection(cpu0.dmaster, dslave);
 
   BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) imem <-
     mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
