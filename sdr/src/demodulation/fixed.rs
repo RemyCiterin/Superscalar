@@ -63,6 +63,14 @@ impl fixed32 {
         return r;
     }
 
+    pub fn raw(self) -> i32 {
+        self.raw
+    }
+
+    pub fn from_raw(raw: i32) -> Self {
+        Self {raw}
+    }
+
     pub fn zero() -> Self { Self::from(0.0) }
     pub fn one() -> Self { Self::from(1.0) }
     pub fn two() -> Self { Self::from(2.0) }
@@ -102,7 +110,7 @@ impl fixed32 {
     }
 
     /// A kernel to compute (dot(x,y), dot(x,z)) optimised for my RISC-V CPU
-    #[inline(never)]
+    #[inline(always)]
     pub fn double_dot_product(x: &[fixed32], y: &[fixed32], z: &[fixed32]) -> (fixed32, fixed32) {
         assert!(x.len() == y.len());
         assert!(x.len() == z.len());
@@ -131,24 +139,12 @@ impl fixed32 {
                 "addi {B}, {B}, 4",
 
                 "addi {C}, {C}, 4",
-                "mul {tmp3}, {tmp0}, {tmp1}",
+                ".insn r CUSTOM_0, 0x0, 0x0, {tmp4}, {tmp0}, {tmp1}",
 
-                "mul {tmp4}, {tmp0}, {tmp2}",
-                "mulh {tmp1}, {tmp0}, {tmp1}",
+                ".insn r CUSTOM_0, 0x0, 0x0, {tmp3}, {tmp0}, {tmp2}",
+                "add {O1}, {O1}, {tmp4}",
 
-                "mulh {tmp2}, {tmp0}, {tmp2}",
-                "srli {tmp3}, {tmp3}, {SRL}",
-
-                "srli {tmp4}, {tmp4}, {SRL}",
-                "slli {tmp1}, {tmp1}, {SLL}",
-
-                "slli {tmp2}, {tmp2}, {SLL}",
-                "or {tmp0}, {tmp1}, {tmp3}",
-
-                "or {tmp1}, {tmp2}, {tmp4}",
-                "add {O1}, {O1}, {tmp0}",
-
-                "add {O2}, {O2}, {tmp1}",
+                "add {O2}, {O2}, {tmp3}",
                 "j 0b",
 
                 "1:",
@@ -163,8 +159,6 @@ impl fixed32 {
                 MaxA = inout(reg) addr_x + x.len() * 4 => _,
                 O1 = inout(reg) raw1 => raw1,
                 O2 = inout(reg) raw2 => raw2,
-                SRL = const FIXED_LOG_SCALE,
-                SLL = const (32-FIXED_LOG_SCALE),
             );
         }
 
@@ -221,8 +215,19 @@ impl core::ops::Mul<fixed32> for fixed32 {
     type Output = fixed32;
 
     fn mul(self: fixed32, rhs: fixed32) -> fixed32 {
-        let x: i64 = (self.raw as i64) * (rhs.raw as i64);
-        return Self{ raw: (x >> FIXED_LOG_SCALE) as i32 };
+        //let x: i64 = (self.raw as i64) * (rhs.raw as i64);
+        //return Self{ raw: (x >> FIXED_LOG_SCALE) as i32 };
+
+        let ret: i32;
+        unsafe {
+            core::arch::asm!(
+                ".insn r CUSTOM_0, 0x0, 0x0, {ret}, {x}, {y}",
+                ret = out(reg) ret,
+                x = in(reg) self.raw,
+                y = in(reg) rhs.raw,
+            );
+        }
+        return Self{raw: ret};
     }
 }
 

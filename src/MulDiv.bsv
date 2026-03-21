@@ -8,6 +8,7 @@ export mkDivServer;
 typedef struct {
   Bit#(32) x1;
   Bit#(32) x2;
+  Bool fixedPoint;
   Bool x1Signed;
   Bool x2Signed;
   Bool high;
@@ -92,7 +93,7 @@ module mkMulServer(MulServer);
     Bit#(64) x1 = req.x1Signed ? signExtend(req.x1) : zeroExtend(req.x1);
     Bit#(64) x2 = req.x2Signed ? signExtend(req.x2) : zeroExtend(req.x2);
     Bit#(64) ret = fastMul ? x1 * x2 : server.response;
-    return req.high ? ret[63:32] : ret[31:0];
+    return req.fixedPoint ? ret[47:16] : (req.high ? ret[63:32] : ret[31:0]);
   endmethod
 endmodule
 

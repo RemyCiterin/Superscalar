@@ -59,6 +59,9 @@ typedef enum {
   Mulhu,
   Mulhsu,
 
+  // Custom fixed-point multiplication
+  FixedPointMul,
+
   // Zba
   Sh1add,
   Sh2add,
@@ -152,7 +155,7 @@ function RvInstr decodeRvInstr(Bit#(32) data);
     .* : False;
   endcase;
 
-  let rtype = opcode == 7'b0110011 || opcode == 7'b0101111;
+  let rtype = opcode == 7'b0110011 || opcode == 7'b0101111 || opcode == 7'b0001011;
   let stype = opcode == 7'b0100011;
   let jtype = opcode == 7'b1101111;
   let btype = opcode == 7'b1100011;
@@ -258,6 +261,7 @@ function RvInstr decodeRvInstr(Bit#(32) data);
       {7'b0110011, 7'b0000000, 3'b001} : Sll;
       {7'b0110011, 7'b0000000, 3'b101} : Srl;
       {7'b0110011, 7'b0100000, 3'b101} : Sra;
+      {7'b0001011, 7'b0000000, 3'b000} : FixedPointMul;
       .* : Err;
     endcase;
 

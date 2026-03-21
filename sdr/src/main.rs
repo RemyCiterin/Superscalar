@@ -20,13 +20,11 @@ use demodulation::backend::*;
 use demodulation::fixed::*;
 
 use core::{
-    arch::{global_asm, asm},
+    arch::{global_asm},
     panic::PanicInfo,
 };
 
 use riscv::register;
-use spinning_top::RwSpinlock;
-use spinning_top::Spinlock;
 
 global_asm!(include_str!("init.s"));
 
@@ -36,7 +34,6 @@ fn panic(info: &PanicInfo) -> ! {
     loop {}
 }
 
-use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use lazy_static::lazy_static;
@@ -44,8 +41,6 @@ use lazy_static::lazy_static;
 lazy_static!{
     // Control if the shared ressources has been initialized, thread 0 is in charge of it
     static ref START : AtomicBool = AtomicBool::new(false);
-
-    static ref VECTOR: RwSpinlock<Vec<usize>> = RwSpinlock::new(vec![]);
 }
 
 
@@ -65,21 +60,6 @@ unsafe extern "C" fn machine_main() -> () {
 
     // Wait until all the shared ressources are initialized
     while !START.load(Ordering::Acquire) {}
-
-    let mut cycle = register::mcycle::read();
-    let mut instr = register::minstret::read();
-    VECTOR.write().push(42);
-
-    {
-        let guard = VECTOR.read();
-        println!("vector[0] = {:?}", guard);
-        cycle = register::mcycle::read() - cycle;
-        instr = register::minstret::read() - instr;
-        println!("{} cycle: {} instr: {}", tp, cycle, instr);
-        println!();
-
-        drop(guard);
-    }
 
     let bytes_buffer = include_bytes!("wave.txt");
     let (b1, float_buffer, b2) = bytes_buffer.align_to::<f32>();

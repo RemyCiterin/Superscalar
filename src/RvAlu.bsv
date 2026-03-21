@@ -19,7 +19,7 @@ module mkAlu#(Bool multiplication, Bool division, Bool branch) (AluIfc);
 
   let isDivRem = List::elem(request.instr.opcode, lst(Div, Divu, Rem, Remu));
 
-  let isMul = List::elem(request.instr.opcode, lst(Mul, Mulh, Mulhu, Mulhsu));
+  let isMul = List::elem(request.instr.opcode, lst(Mul, Mulh, Mulhu, Mulhsu, FixedPointMul));
 
   let isCount = List::elem(request.instr.opcode, lst(Clz, Cpop, Ctz));
 
@@ -34,7 +34,8 @@ module mkAlu#(Bool multiplication, Bool division, Bool branch) (AluIfc);
 
   method Bool canEnter = !valid[1];
   method Action enter(AluRequest req) if (!valid[1]);
-    if (division && List::elem(req.instr.opcode, lst(Div, Divu, Rem, Remu))) begin
+    let isDiv = List::elem(req.instr.opcode, lst(Div, Divu, Rem, Remu));
+    if (division && isDiv) begin
       divider.enter(DivRequest{
         isSigned: List::elem(req.instr.opcode, lst(Div, Rem)),
         rem: List::elem(req.instr.opcode, lst(Rem, Remu)),
@@ -43,11 +44,13 @@ module mkAlu#(Bool multiplication, Bool division, Bool branch) (AluIfc);
       });
     end
 
-    if (multiplication && List::elem(req.instr.opcode, lst(Mul, Mulh, Mulhu, Mulhsu))) begin
+    let isMul = List::elem(req.instr.opcode, lst(Mul, Mulh, Mulhu, Mulhsu, FixedPointMul));
+    if (multiplication && isMul) begin
       multiplier.enter(MulRequest{
+        fixedPoint: List::elem(req.instr.opcode, lst(FixedPointMul)),
         high: List::elem(req.instr.opcode, lst(Mulh, Mulhu, Mulhsu)),
-        x1Signed: List::elem(req.instr.opcode, lst(Mul, Mulh, Mulhsu)),
-        x2Signed: List::elem(req.instr.opcode, lst(Mul, Mulh)),
+        x1Signed: List::elem(req.instr.opcode, lst(Mul, Mulh, Mulhsu, FixedPointMul)),
+        x2Signed: List::elem(req.instr.opcode, lst(Mul, Mulh, FixedPointMul)),
         x1: req.rs1,
         x2: req.rs2
       });
