@@ -89,16 +89,18 @@ unsafe extern "C" fn machine_main() -> () {
     println!("{}", float_buffer.len());
 
     let mut fixed_buffer = alloc::vec::Vec::<fixed32>::new();
-    for x in &float_buffer[0..4096*16] { fixed_buffer.push(fixed32::from(*x)); }
+    for x in &float_buffer[0..4096] { fixed_buffer.push(fixed32::from(*x)); }
+    //for x in float_buffer { fixed_buffer.push(fixed32::from(*x)); }
 
     println!("{} samples copied", fixed_buffer.len());
 
     let sample_rate: f32 = 44100. / 8.;
     let freq: f32 = 5000. / 8.;
     let sample_per_symbol: f32 = 100.;
+    let decimation: usize = 16;
 
     let frontend_config = FrontendConfig{
-        decimation: 16,
+        decimation,
         backman_coefs: 50,
         carrier_freq: fixed32::from(freq),
         carrier_pll_p_gain: fixed32::from(0.1),
@@ -112,7 +114,7 @@ unsafe extern "C" fn machine_main() -> () {
         symbol_rate: fixed32::from(sample_rate / sample_per_symbol),
         symbol_pll_p_gain: fixed32::from(0.05),
         symbol_pll_i_gain: fixed32::from(0.001),
-        decimation: 16,
+        decimation,
     };
 
     let mut frontend = Frontend::new(frontend_config);

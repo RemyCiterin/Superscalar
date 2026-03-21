@@ -100,8 +100,8 @@ impl Frontend {
             *x /= sum;
         }
 
-        let mut sin_buf = vec![];
-        let mut cos_buf = vec![];
+        let mut sin_buf = alloc::vec::Vec::with_capacity(4096*32);
+        let mut cos_buf = alloc::vec::Vec::with_capacity(4096*32);
         sin_buf.resize(config.backman_coefs - 1, ZERO);
         cos_buf.resize(config.backman_coefs - 1, ZERO);
 
@@ -131,6 +131,8 @@ impl Frontend {
         let mut delta_sin = fixed32::sin(TWO*PI*self.carrier_freq / self.sample_rate);
 
         //println!("cos: {} sin: {}", delta_cos, delta_sin);
+        let mut backend_time: isize = 0;
+        let mut backend_inst: isize = 0;
 
         for (index, sample) in samples.iter().cloned().enumerate() {
             let new_cos = self.cos_coef * delta_cos - self.sin_coef * delta_sin;
@@ -140,7 +142,9 @@ impl Frontend {
             self.cos_coef = new_cos;
             self.sin_coef = new_sin;
 
-            if index % 8 == 0 {
+            // A I used bad approximations of `cos/sin`, I need to normalize periodically their
+            // values to ensure that the apprixmation doesn't diverge
+            if index % 1024 == 0 {
                 if self.cos_coef * self.cos_coef + self.sin_coef * self.sin_coef < ONE / TWO {
                     self.cos_coef *= TWO;
                     self.sin_coef *= TWO;
@@ -155,13 +159,20 @@ impl Frontend {
             if index % 1024 == 0 { println!("index: {:x}", index); }
 
             if index % self.decimation == 0 {
-                let mut I: fixed32 = ZERO;
-                let mut Q: fixed32 = ZERO;
+                backend_inst -= riscv::register::minstret::read() as isize;
+                backend_time -= riscv::register::mcycle::read() as isize;
+                //let mut I: fixed32 = ZERO;
+                //let mut Q: fixed32 = ZERO;
 
-                for (i,coef) in self.backman_coefs.iter().cloned().enumerate() {
-                    I += coef * self.cos_buf[index + i];
-                    Q += coef * self.sin_buf[index + i];
-                }
+                //for (i,coef) in self.backman_coefs.iter().cloned().enumerate() {
+                //    I += coef * self.cos_buf[index + i];
+                //    Q += coef * self.sin_buf[index + i];
+                //}
+                let (mut I, mut Q) = fixed32::double_dot_product(
+                    self.backman_coefs.as_slice(),
+                    &self.cos_buf[index..index+self.backman_coefs.len()],
+                    &self.sin_buf[index..index+self.backman_coefs.len()],
+                );
 
                 I *= self.averager_coef;
                 Q *= self.averager_coef;
@@ -184,8 +195,12 @@ impl Frontend {
                     delta_cos = fixed32::cos(TWO*PI*self.carrier_freq / self.sample_rate);
                     delta_sin = fixed32::sin(TWO*PI*self.carrier_freq / self.sample_rate);
                 }
+                backend_inst += riscv::register::minstret::read() as isize;
+                backend_time += riscv::register::mcycle::read() as isize;
             }
         }
+
+        println!("backend time: {} inst: {}", backend_time, backend_inst);
 
         for i in 0..self.backman_coefs.len() - 1 {
             self.cos_buf[i] = self.cos_buf[i+samples.len()];
