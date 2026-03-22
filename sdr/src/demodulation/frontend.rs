@@ -141,18 +141,21 @@ impl Frontend {
         let mut backend_inst: isize = 0;
 
         self.resize(samples.len());
-        for position in 0..steps {
-            let index: usize = position * self.decimation;
 
-            for i in 0..self.decimation {
+        let mut index: usize = 0;
+        while index < steps * self.decimation {
+
+            for i in 0..self.decimation {unsafe{
                 let sample = samples[index + i];
                 let new_cos = self.cos_coef * delta_cos - self.sin_coef * delta_sin;
                 let new_sin = self.cos_coef * delta_sin + self.sin_coef * delta_cos;
-                self.cos_buf[self.backman_coefs.len() - 1 + index + i] = new_cos * sample;
-                self.sin_buf[self.backman_coefs.len() - 1 + index + i] = new_sin * sample;
+                *self.cos_buf.get_unchecked_mut(self.backman_coefs.len() - 1 + index + i) =
+                    new_cos * sample;
+                *self.sin_buf.get_unchecked_mut(self.backman_coefs.len() - 1 + index + i) =
+                    new_sin * sample;
                 self.cos_coef = new_cos;
                 self.sin_coef = new_sin;
-            }
+            }}
 
             //unsafe {
             //    let sample_ptr = samples.as_ptr() as usize;
@@ -238,13 +241,17 @@ impl Frontend {
 
             backend_inst -= riscv::register::minstret::read() as isize;
             backend_time -= riscv::register::mcycle::read() as isize;
+
             let mut I: fixed32 = ZERO;
             let mut Q: fixed32 = ZERO;
 
-            for (i,coef) in self.backman_coefs.iter().cloned().enumerate() {
-                I += coef * self.cos_buf[index + i];
-                Q += coef * self.sin_buf[index + i];
+            unsafe{
+                for (i,coef) in self.backman_coefs.iter().cloned().enumerate() {
+                    I += coef * *self.cos_buf.get_unchecked(index+i);
+                    Q += coef * *self.sin_buf.get_unchecked(index+i);
+                }
             }
+
             //let (mut I, mut Q) = fixed32::double_dot_product(
             //    self.backman_coefs.as_slice(),
             //    &self.cos_buf[index..index+self.backman_coefs.len()],
@@ -274,6 +281,8 @@ impl Frontend {
             }
             backend_inst += riscv::register::minstret::read() as isize;
             backend_time += riscv::register::mcycle::read() as isize;
+
+            index += self.decimation;
         }
 
         println!("backend time: {} inst: {}", backend_time, backend_inst);

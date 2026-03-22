@@ -8,29 +8,29 @@ fixed fixed_fmod(fixed x, fixed y) {
 
 // Taylor approximation of cos(x)
 fixed fixed_cos(fixed x) {
-  while (x > PI) x -= 2 * PI;
-  while (x < -PI) x += 2 * PI;
+  //while (x > PI) x -= 2 * PI;
+  //while (x < -PI) x += 2 * PI;
 
-  return
-    FIXED(1) -
-    fixed_mul(fixed_pow(x,2), FIXED(1.0 / 2.0)) +
-    fixed_mul(fixed_pow(x,4), FIXED(1.0 / 24.0)) -
-    fixed_mul(fixed_pow(x,6), FIXED(1.0 / 720.0));
-  //x = fixed_fmod(x, 2*PI);
-  //x = fixed_mul(x, x);
-  //fixed eps = 100;
+  //return
+  //  FIXED(1) -
+  //  fixed_mul(fixed_pow(x,2), FIXED(1.0 / 2.0)) +
+  //  fixed_mul(fixed_pow(x,4), FIXED(1.0 / 24.0)) -
+  //  fixed_mul(fixed_pow(x,6), FIXED(1.0 / 720.0));
+  x = fixed_fmod(x, 2*PI);
+  x = fixed_mul(x, x);
+  fixed eps = 10;
 
-  //int n = 0;
-  //fixed s = FIXED(1);
-  //fixed t = FIXED(1);
+  int n = 0;
+  fixed s = FIXED(1);
+  fixed t = FIXED(1);
 
-  //while (fixed_abs(fixed_div(t,s)) > eps) {
-  //  n += 2;
-  //  t = -fixed_mul(x,t) / (n*n - n);
-  //  s = s + t;
-  //}
+  while (fixed_abs(fixed_div(t,s)) > eps) {
+    n += 2;
+    t = -fixed_mul(x,t) / (n*n - n);
+    s = s + t;
+  }
 
-  //return s;
+  return s;
 }
 
 // Taylor approximation of sin(x)
@@ -75,17 +75,15 @@ inline fixed fixed_nmul(int n, ...) {
 
 void print_fixed(fixed x) {
   fixed a = fixed_abs(x);
-  int i = a >> FIXED_LOG_SCALE;
-  unsigned f = a & (FIXED_SCALE - 1);
-
-  f = (f * 100000) / FIXED_SCALE;
+  unsigned i = (unsigned)(a) / FIXED_SCALE;
+  unsigned f = (unsigned)(a) & (FIXED_SCALE - 1);
+  f = (f * 10000) / FIXED_SCALE;
 
   if (x < 0) printf("-");
   printf("%d.", i);
 
-  if (f >= 10000) printf("%d", f);
-  else if (f >= 1000) printf("0%d", f);
-  else if (f >= 100) printf("00%d", f);
-  else if (f >= 10) printf("000%d", f);
-  else printf("0000%d", f);
+  if (f >= 1000) printf("%d", f);
+  else if (f >= 100) printf("0%d", f);
+  else if (f >= 10) printf("00%d", f);
+  else printf("000%d", f);
 }

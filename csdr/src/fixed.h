@@ -21,6 +21,11 @@ typedef int fixed;
 inline fixed fixed_mul(fixed a, fixed b) {
   int64_t x = (int64_t)a * (int64_t)b;
   return (fixed)(x >> FIXED_LOG_SCALE);
+  //fixed ret;
+  //asm (
+  //    ".insn r CUSTOM_0, 0x0, 0x0, %[ret], %[x], %[y]"
+  //    : [ret] "=r" (ret) : [x] "r" (a), [y] "r" (b));
+  //return ret;
 }
 
 fixed fixed_nmul(int n, ...);

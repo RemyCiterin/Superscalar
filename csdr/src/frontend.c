@@ -64,7 +64,7 @@ int sdr_frontend(frontend_t* state, fixed* samples, fixed* C, fixed* S, char* sy
     }
 
     if (i % 1024 == 0) {
-      printf("index: %x\n", i);
+      //printf("index: %x\n", i);
       if (fixed_pow(state->carrier_cos,2) + fixed_pow(state->carrier_sin,2) > FIXED(2.0)) {
         state->carrier_cos /= 2;
         state->carrier_sin /= 2;
@@ -105,6 +105,9 @@ int sdr_frontend(frontend_t* state, fixed* samples, fixed* C, fixed* S, char* sy
       symbols[index++] = (I > 0) == state->last_symbol ? 0 : 1;
       state->last_symbol = I > 0;
 
+      //printf("id: %d symbol: %x ", i, symbols[index-1]);
+      //print_fixed(fixed_mul(2*DECIMATION*PI, state->symbol_rate / state->sample_rate));
+
       // The phase must be 0 or PI when we measure a symbol
       fixed theta = fixed_atan2(Q, I);
       fixed err = -fmodulo(theta, PI);
@@ -112,9 +115,10 @@ int sdr_frontend(frontend_t* state, fixed* samples, fixed* C, fixed* S, char* sy
 
       state->carrier_freq =
         state->carrier_freq0 + fixed_mul(FIXED(0.1), err) + state->carrier_integrator;
-      delta_cos = fixed_cos(2*fixed_mul(PI,state->carrier_freq) / state->sample_rate);
-      delta_sin = fixed_sin(2*fixed_mul(PI,state->carrier_freq) / state->sample_rate);
-      //debug_fixed("carrier freq: ", state->carrier_freq);
+      delta_cos = fixed_cos(2*fixed_mul(PI,state->carrier_freq / state->sample_rate));
+      delta_sin = fixed_sin(2*fixed_mul(PI,state->carrier_freq / state->sample_rate));
+      //debug_fixed(" carrier freq: ", state->carrier_freq);
+      //debug_fixed(" Q: ", Q);
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////////

@@ -107,9 +107,9 @@ unsafe extern "C" fn machine_main() -> () {
     let mut cycles = riscv::register::mcycle::read();
     let mut instrs = riscv::register::minstret::read();
 
-    core::arch::asm!(".insn r CUSTOM_0, 0x0, 0x1, x0, x0, x0");
+    //core::arch::asm!(".insn r CUSTOM_0, 0x0, 0x1, x0, x0, x0");
     frontend.run(&fixed_buffer, &mut symbols, &mut backend);
-    core::arch::asm!(".insn r CUSTOM_0, 0x0, 0x1, x0, x0, x0");
+    //core::arch::asm!(".insn r CUSTOM_0, 0x0, 0x1, x0, x0, x0");
 
     cycles = riscv::register::mcycle::read() - cycles;
     instrs = riscv::register::minstret::read() - instrs;

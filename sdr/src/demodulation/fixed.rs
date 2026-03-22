@@ -215,19 +215,19 @@ impl core::ops::Mul<fixed32> for fixed32 {
     type Output = fixed32;
 
     fn mul(self: fixed32, rhs: fixed32) -> fixed32 {
-        //let x: i64 = (self.raw as i64) * (rhs.raw as i64);
-        //return Self{ raw: (x >> FIXED_LOG_SCALE) as i32 };
+        let x: i64 = (self.raw as i64) * (rhs.raw as i64);
+        return Self{ raw: (x >> FIXED_LOG_SCALE) as i32 };
 
-        let ret: i32;
-        unsafe {
-            core::arch::asm!(
-                ".insn r CUSTOM_0, 0x0, 0x0, {ret}, {x}, {y}",
-                ret = out(reg) ret,
-                x = in(reg) self.raw,
-                y = in(reg) rhs.raw,
-            );
-        }
-        return Self{raw: ret};
+        //let ret: i32;
+        //unsafe {
+        //    core::arch::asm!(
+        //        ".insn r CUSTOM_0, 0x0, 0x0, {ret}, {x}, {y}",
+        //        ret = out(reg) ret,
+        //        x = in(reg) self.raw,
+        //        y = in(reg) rhs.raw,
+        //    );
+        //}
+        //return Self{raw: ret};
     }
 }
 

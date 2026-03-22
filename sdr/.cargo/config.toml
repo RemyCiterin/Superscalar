@@ -28,12 +28,9 @@ runner = [
 rustflags = [
     "-C", "link-arg=-Tsrc/linker.ld",
     "-C", "opt-level=3",
-    "-C", "llvm-args=-align-all-functions=2",
-    "-C", "llvm-args=-align-all-blocks=2",
-    "-C", "llvm-args=--inline-threshold=1000",
-    #"-C", "llvm-args=--help",
-    # "-C", "target-feature=+zicbom",
-    # "-C", "target-feature=+f",
+    "-C", "llvm-args=-align-all-functions=3",
+    "-C", "llvm-args=-align-all-blocks=3",
+    "-C", "llvm-args=-inline-threshold=1000",
 ]
 
 [build]

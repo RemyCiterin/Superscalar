@@ -1,11 +1,11 @@
 {
   "arch": "riscv32",
-  "cpu": "generic-rv32",
+  "cpu": "sifive-e76",
   "crt-objects-fallback": "false",
   "data-layout": "e-m:e-p:32:32-i64:64-n32-S128",
   "eh-frame-header": false,
   "emit-debug-gdb-scripts": false,
-  "features": "+m,+a,+zba,+zbb",
+  "features": "-c,-f,+m,+a,+zba,+zbb",
   "linker": "rust-lld",
   "linker-flavor": "gnu-lld",
   "llvm-abiname": "ilp32",
