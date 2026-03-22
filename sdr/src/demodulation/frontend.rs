@@ -123,6 +123,11 @@ impl Frontend {
         }
     }
 
+    pub fn resize(&mut self, size: usize) {
+        self.cos_buf.resize(self.backman_coefs.len() - 1 + size, ZERO);
+        self.sin_buf.resize(self.backman_coefs.len() - 1 + size, ZERO);
+    }
+
     #[allow(non_snake_case)]
     pub fn run<B: Backend>(
         &mut self, samples: &[fixed32], symbols: &mut Vec<B::Symbol>, backend: &mut B
@@ -135,87 +140,85 @@ impl Frontend {
         let mut backend_time: isize = 0;
         let mut backend_inst: isize = 0;
 
-        self.cos_buf.resize(self.cos_buf.len() + samples.len(), ZERO);
-        self.sin_buf.resize(self.cos_buf.len() + samples.len(), ZERO);
-
+        self.resize(samples.len());
         for position in 0..steps {
             let index: usize = position * self.decimation;
 
-            //for i in 0..self.decimation {
-            //    let sample = samples[index + i];
-            //    let new_cos = self.cos_coef * delta_cos - self.sin_coef * delta_sin;
-            //    let new_sin = self.cos_coef * delta_sin + self.sin_coef * delta_cos;
-            //    self.cos_buf[self.backman_coefs.len() - 1 + index + i] = new_cos * sample;
-            //    self.sin_buf[self.backman_coefs.len() - 1 + index + i] = new_sin * sample;
-            //    self.cos_coef = new_cos;
-            //    self.sin_coef = new_sin;
-            //}
-
-            unsafe {
-                let sample_ptr = samples.as_ptr() as usize;
-                let cos_ptr = self.cos_buf.as_mut_slice().as_mut_ptr() as usize;
-                let sin_ptr = self.sin_buf.as_mut_slice().as_mut_ptr() as usize;
-                let offset = index + self.backman_coefs.len() - 1;
-                let mut cos_raw = self.cos_coef.raw();
-                let mut sin_raw = self.sin_coef.raw();
-                let steps: usize = self.decimation;
-                core::arch::asm!(
-                    // We start by jumping to an 8-aligned address to ensure pair of instructions
-                    // are executed in the same bundle
-                    "j 0f",
-                    ".align 3",
-                    "0:",
-
-                    "beqz {steps}, 1f",
-                    "lw {sample}, ({sample_ptr})",
-
-                    "addi {sample_ptr}, {sample_ptr}, 4",
-                    "addi {steps}, {steps}, -1",
-
-                    ".insn r CUSTOM_0, 0x0, 0x0, {tmp_cos_coef}, {cos_coef}, {delta_cos}",
-                    ".insn r CUSTOM_0, 0x0, 0x0, {tmp1}, {sin_coef}, {delta_sin}",
-
-                    ".insn r CUSTOM_0, 0x0, 0x0, {sin_coef}, {sin_coef}, {delta_cos}",
-                    ".insn r CUSTOM_0, 0x0, 0x0, {tmp2}, {cos_coef}, {delta_sin}",
-
-                    "sub {tmp_cos_coef}, {tmp_cos_coef}, {tmp1}",
-                    "mv {cos_coef}, {tmp_cos_coef}",
-
-                    ".insn r CUSTOM_0, 0x0, 0x0, {tmp0}, {cos_coef}, {sample}",
-                    "add {sin_coef}, {tmp2}, {sin_coef}",
-
-                    ".insn r CUSTOM_0, 0x0, 0x0, {tmp3}, {sin_coef}, {sample}",
-                    "sw {tmp0}, ({cos_ptr})",
-
-                    "addi {cos_ptr}, {cos_ptr}, 4",
-                    "sw {tmp3}, ({sin_ptr})",
-
-                    "addi {sin_ptr}, {sin_ptr}, 4",
-                    "j 0b",
-
-                    "1:",
-
-                    tmp0 = out(reg) _,
-                    tmp1 = out(reg) _,
-                    tmp2 = out(reg) _,
-                    tmp3 = out(reg) _,
-
-                    tmp_cos_coef = out(reg) _,
-
-                    sample = out(reg) _,
-                    steps = inout(reg) steps => _,
-                    sample_ptr = inout(reg) sample_ptr + index*4 => _,
-                    sin_ptr = inout(reg) sin_ptr + offset*4 => _,
-                    cos_ptr = inout(reg) cos_ptr + offset*4 => _,
-                    delta_cos = in(reg) delta_cos.raw(),
-                    delta_sin = in(reg) delta_sin.raw(),
-                    cos_coef = inout(reg) cos_raw => cos_raw,
-                    sin_coef = inout(reg) sin_raw => sin_raw,
-                );
-
-                self.cos_coef = fixed32::from_raw(cos_raw);
-                self.sin_coef = fixed32::from_raw(sin_raw);
+            for i in 0..self.decimation {
+                let sample = samples[index + i];
+                let new_cos = self.cos_coef * delta_cos - self.sin_coef * delta_sin;
+                let new_sin = self.cos_coef * delta_sin + self.sin_coef * delta_cos;
+                self.cos_buf[self.backman_coefs.len() - 1 + index + i] = new_cos * sample;
+                self.sin_buf[self.backman_coefs.len() - 1 + index + i] = new_sin * sample;
+                self.cos_coef = new_cos;
+                self.sin_coef = new_sin;
             }
+
+            //unsafe {
+            //    let sample_ptr = samples.as_ptr() as usize;
+            //    let cos_ptr = self.cos_buf.as_mut_slice().as_mut_ptr() as usize;
+            //    let sin_ptr = self.sin_buf.as_mut_slice().as_mut_ptr() as usize;
+            //    let offset = index + self.backman_coefs.len() - 1;
+            //    let mut cos_raw = self.cos_coef.raw();
+            //    let mut sin_raw = self.sin_coef.raw();
+            //    let steps: usize = self.decimation;
+            //    core::arch::asm!(
+            //        // We start by jumping to an 8-aligned address to ensure pair of instructions
+            //        // are executed in the same bundle
+            //        "j 0f",
+            //        ".align 3",
+            //        "0:",
+
+            //        "beqz {steps}, 1f",
+            //        "lw {sample}, ({sample_ptr})",
+
+            //        "addi {sample_ptr}, {sample_ptr}, 4",
+            //        "addi {steps}, {steps}, -1",
+
+            //        ".insn r CUSTOM_0, 0x0, 0x0, {tmp_cos_coef}, {cos_coef}, {delta_cos}",
+            //        ".insn r CUSTOM_0, 0x0, 0x0, {tmp1}, {sin_coef}, {delta_sin}",
+
+            //        ".insn r CUSTOM_0, 0x0, 0x0, {sin_coef}, {sin_coef}, {delta_cos}",
+            //        ".insn r CUSTOM_0, 0x0, 0x0, {tmp2}, {cos_coef}, {delta_sin}",
+
+            //        "sub {tmp_cos_coef}, {tmp_cos_coef}, {tmp1}",
+            //        "mv {cos_coef}, {tmp_cos_coef}",
+
+            //        ".insn r CUSTOM_0, 0x0, 0x0, {tmp0}, {cos_coef}, {sample}",
+            //        "add {sin_coef}, {tmp2}, {sin_coef}",
+
+            //        ".insn r CUSTOM_0, 0x0, 0x0, {tmp3}, {sin_coef}, {sample}",
+            //        "sw {tmp0}, ({cos_ptr})",
+
+            //        "addi {cos_ptr}, {cos_ptr}, 4",
+            //        "sw {tmp3}, ({sin_ptr})",
+
+            //        "addi {sin_ptr}, {sin_ptr}, 4",
+            //        "j 0b",
+
+            //        "1:",
+
+            //        tmp0 = out(reg) _,
+            //        tmp1 = out(reg) _,
+            //        tmp2 = out(reg) _,
+            //        tmp3 = out(reg) _,
+
+            //        tmp_cos_coef = out(reg) _,
+
+            //        sample = out(reg) _,
+            //        steps = inout(reg) steps => _,
+            //        sample_ptr = inout(reg) sample_ptr + index*4 => _,
+            //        sin_ptr = inout(reg) sin_ptr + offset*4 => _,
+            //        cos_ptr = inout(reg) cos_ptr + offset*4 => _,
+            //        delta_cos = in(reg) delta_cos.raw(),
+            //        delta_sin = in(reg) delta_sin.raw(),
+            //        cos_coef = inout(reg) cos_raw => cos_raw,
+            //        sin_coef = inout(reg) sin_raw => sin_raw,
+            //    );
+
+            //    self.cos_coef = fixed32::from_raw(cos_raw);
+            //    self.sin_coef = fixed32::from_raw(sin_raw);
+            //}
 
             // A I used bad approximations of `cos/sin`, I need to normalize periodically their
             // values to ensure that the apprixmation doesn't diverge
@@ -226,8 +229,8 @@ impl Frontend {
                 }
 
                 if self.cos_coef * self.cos_coef + self.sin_coef * self.sin_coef > TWO {
-                    self.cos_coef /= TWO;
-                    self.sin_coef /= TWO;
+                    self.cos_coef *= ONE / TWO;
+                    self.sin_coef *= ONE / TWO;
                 }
             }
 
@@ -235,18 +238,18 @@ impl Frontend {
 
             backend_inst -= riscv::register::minstret::read() as isize;
             backend_time -= riscv::register::mcycle::read() as isize;
-            //let mut I: fixed32 = ZERO;
-            //let mut Q: fixed32 = ZERO;
+            let mut I: fixed32 = ZERO;
+            let mut Q: fixed32 = ZERO;
 
-            //for (i,coef) in self.backman_coefs.iter().cloned().enumerate() {
-            //    I += coef * self.cos_buf[index + i];
-            //    Q += coef * self.sin_buf[index + i];
-            //}
-            let (mut I, mut Q) = fixed32::double_dot_product(
-                self.backman_coefs.as_slice(),
-                &self.cos_buf[index..index+self.backman_coefs.len()],
-                &self.sin_buf[index..index+self.backman_coefs.len()],
-            );
+            for (i,coef) in self.backman_coefs.iter().cloned().enumerate() {
+                I += coef * self.cos_buf[index + i];
+                Q += coef * self.sin_buf[index + i];
+            }
+            //let (mut I, mut Q) = fixed32::double_dot_product(
+            //    self.backman_coefs.as_slice(),
+            //    &self.cos_buf[index..index+self.backman_coefs.len()],
+            //    &self.sin_buf[index..index+self.backman_coefs.len()],
+            //);
 
             I *= self.averager_coef;
             Q *= self.averager_coef;

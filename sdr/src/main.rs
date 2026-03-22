@@ -69,7 +69,7 @@ unsafe extern "C" fn machine_main() -> () {
     println!("{}", float_buffer.len());
 
     let mut fixed_buffer = alloc::vec::Vec::<fixed32>::new();
-    for x in &float_buffer[0..4096] { fixed_buffer.push(fixed32::from(*x)); }
+    for x in &float_buffer[0..4096*16] { fixed_buffer.push(fixed32::from(*x)); }
     //for x in float_buffer { fixed_buffer.push(fixed32::from(*x)); }
 
     println!("{} samples copied", fixed_buffer.len());
@@ -102,10 +102,14 @@ unsafe extern "C" fn machine_main() -> () {
 
     let mut symbols = alloc::vec::Vec::<i8>::new();
 
+    frontend.resize(fixed_buffer.len());
+
     let mut cycles = riscv::register::mcycle::read();
     let mut instrs = riscv::register::minstret::read();
 
+    core::arch::asm!(".insn r CUSTOM_0, 0x0, 0x1, x0, x0, x0");
     frontend.run(&fixed_buffer, &mut symbols, &mut backend);
+    core::arch::asm!(".insn r CUSTOM_0, 0x0, 0x1, x0, x0, x0");
 
     cycles = riscv::register::mcycle::read() - cycles;
     instrs = riscv::register::minstret::read() - instrs;

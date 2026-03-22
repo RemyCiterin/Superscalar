@@ -78,6 +78,20 @@ rust:
 	riscv32-none-elf-objdump -D rust/target/riscv32ima-unknown-none-elf/release/kernel \
 		> rust/firmware.asm
 
+.PHONY: csdr
+csdr:
+	elf_to_hex/elf_to_hex_32 csdr/build/decode Mem.mem
+	elf_to_hex/elf_to_hex_32 csdr/build/decode Mem32.mem \
+		> /dev/null
+	elf_to_hex/elf_to_hex_64 csdr/build/decode Mem64.mem \
+		> /dev/null
+	elf_to_hex/elf_to_hex_128 csdr/build/decode Mem128.mem \
+		> /dev/null
+	elf_to_hex/elf_to_hex_256 csdr/build/decode Mem256.mem \
+		> /dev/null
+	riscv32-none-elf-objdump -D csdr/build/decode \
+		> csdr/firmware.asm
+
 .PHONY: sdr
 sdr:
 	elf_to_hex/elf_to_hex_32 sdr/target/riscv32ima-unknown-none-elf/release/kernel Mem.mem \
