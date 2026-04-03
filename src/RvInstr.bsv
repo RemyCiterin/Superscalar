@@ -62,6 +62,10 @@ typedef enum {
   // Custom fixed-point multiplication
   FixedPointMul,
 
+  // Custom GF(256) operations
+  MulGF256,
+  DivGF256,
+
   // Zba
   Sh1add,
   Sh2add,
@@ -262,6 +266,8 @@ function RvInstr decodeRvInstr(Bit#(32) data);
       {7'b0110011, 7'b0000000, 3'b101} : Srl;
       {7'b0110011, 7'b0100000, 3'b101} : Sra;
       {7'b0001011, 7'b0000000, 3'b000} : FixedPointMul;
+      {7'b0001011, 7'b0000000, 3'b001} : MulGF256;
+      {7'b0001011, 7'b0000000, 3'b010} : DivGF256;
       .* : Err;
     endcase;
 

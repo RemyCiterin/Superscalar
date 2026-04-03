@@ -3,6 +3,8 @@ import MulDiv::*;
 
 import BuildList::*;
 
+import ReedSolomonGF::*;
+
 interface AluIfc;
   (* always_ready *) method Bool canEnter;
   method Action enter(AluRequest req);
@@ -164,6 +166,8 @@ function AluResponse execAlu(AluRequest req, Bool branch);
   endcase;
 
   let rd = case (req.instr.opcode) matches
+    MulGF256 : zeroExtend(pack(GF256{raw: truncate(rs1)} * GF256{raw: truncate(rs2)}));
+    DivGF256 : zeroExtend(pack(GF256{raw: truncate(rs1)} / GF256{raw: truncate(rs2)}));
     //Clz    : countLeadingZeros(rs1);
     //Ctz    : countTrailingZeros(rs1);
     //Cpop   : countSetBits(rs1);

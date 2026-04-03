@@ -16,6 +16,8 @@ import TLBram::*;
 import RvCore :: *;
 import RvSystem::*;
 
+import ReedSolomonGF::*;
+
 interface MainIfc;
   (* always_ready, always_enabled *)
   method Bit#(8) led;

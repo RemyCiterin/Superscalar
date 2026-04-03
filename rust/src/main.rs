@@ -43,6 +43,34 @@ lazy_static!{
     static ref VECTOR: RwSpinlock<Vec<usize>> = RwSpinlock::new(vec![]);
 }
 
+pub mod gf {
+    pub fn mul(x: u8, y: u8) -> u8 {
+        let ret: u8;
+        unsafe {
+            core::arch::asm!(
+                ".insn r CUSTOM_0, 0x1, 0x0, {ret}, {x}, {y}",
+                ret = out(reg) ret,
+                x = in(reg) x,
+                y = in(reg) y,
+            );
+        }
+        return ret;
+    }
+
+    pub fn div(x: u8, y: u8) -> u8 {
+        let ret: u8;
+        unsafe {
+            core::arch::asm!(
+                ".insn r CUSTOM_0, 0x2, 0x0, {ret}, {x}, {y}",
+                ret = out(reg) ret,
+                x = in(reg) x,
+                y = in(reg) y,
+            );
+        }
+        return ret;
+    }
+}
+
 /// Main program function
 #[no_mangle]
 unsafe extern "C" fn machine_main() -> () {
@@ -72,6 +100,12 @@ unsafe extern "C" fn machine_main() -> () {
         println!();
 
         drop(guard);
+    }
+
+    let mut x: u8 = 2;
+    for i in 0..255 {
+        println!("alpha^{i} = 0x{x:x}");
+        x = gf::mul(x, 2);
     }
 
     loop {}
