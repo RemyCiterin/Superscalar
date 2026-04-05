@@ -102,11 +102,16 @@ unsafe extern "C" fn machine_main() -> () {
         drop(guard);
     }
 
-    let mut x: u8 = 2;
-    for i in 0..255 {
-        println!("alpha^{i} = 0x{x:x}");
-        x = gf::mul(x, 2);
+    for i in 0..256 {
+        if i % 16 == 0 { print!("\n\t"); }
+        print!("'h{:x}, ", gf::div(1, i as u8));
     }
+
+    //let mut x: u8 = 1;
+    //for i in 0..255 {
+    //    println!("alpha^{i} = 0x{x:x}");
+    //    x = gf::mul(x, 2);
+    //}
 
     loop {}
 }

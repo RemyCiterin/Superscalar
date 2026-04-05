@@ -28,8 +28,8 @@ endinterface
 
 (* synthesize *)
 module mkMultiSoc(MainIfc);
-  let cpu0 <- mkCPU(0, 0, 1);
-  let cpu1 <- mkCPU(1, 0, 2);
+  let cpu0 <- mkCPU(0, 0, 1, 3);
+  let cpu1 <- mkCPU(1, 0, 2, 4);
 
   Integer memSize = 'hFFFFFFF;
 
@@ -73,7 +73,7 @@ module mkSoc(MainIfc);
   //let ifc <- mkMultiSoc;
   //return ifc;
 
-  let cpu0 <- mkCPU(0, 0, 1);
+  let cpu0 <- mkCPU(0, 0, 1, 2);
 
   Integer memSize = 'hFFFFFFF;
 

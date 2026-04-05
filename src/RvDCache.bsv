@@ -7,6 +7,9 @@ import TLUtils :: *;
 import Vector :: *;
 import Fifo :: *;
 
+export MmioController(..);
+export mkMmioController;
+
 export DCacheOpcode(..);
 export DCacheStats(..);
 export DCacheAmo(..);
@@ -24,6 +27,7 @@ typedef struct {
 } DCacheStats deriving(Bits);
 
 typedef enum {
+  Nop,
   Lr,
   Sc,
   Ld,
@@ -34,6 +38,7 @@ typedef enum {
 function TLPerm opcodePermission(DCacheOpcode opcode);
   return case (opcode) matches
     Amo : T;
+    Nop : T;
     Ld : B;
     St : T;
     Lr : T;
@@ -196,8 +201,10 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   Reg#(Way) cpu_way <- mkRegU;
 
   Bool cpu_hit =
-    cpu_tag == cpu_phys.tag && cpu_perm != N &&
-    (opcodePermission(cpu_req.opcode) == B || cpu_perm == T || cpu_perm == D);
+    cpu_req.opcode == Nop || (
+      cpu_tag == cpu_phys.tag && cpu_perm != N &&
+      (opcodePermission(cpu_req.opcode) == B || cpu_perm == T || cpu_perm == D)
+    );
 
   ////////////////////////////////////////////////////////////////////////////
   // State of the current probe request
@@ -514,3 +521,54 @@ module mkDCache#(Bit#(sourceW) source) (DCache#(sizeW, sourceW, sinkW));
   };
 endmodule
 
+interface MmioController#(numeric type sizeW, numeric type sourceW, numeric type sinkW);
+  (* always_ready *) method Bool canEnq;
+  method Action enq(DCacheReq req);
+
+  (* always_ready *) method Bool valid;
+  (* always_ready *) method Bit#(32) response;
+  method Action deq;
+
+  interface TLMaster#(32, 32, sizeW, sourceW, sinkW) master;
+endinterface
+
+module mkMmioController#(Bit#(sourceW) source) (MmioController#(sizeW, sourceW, sinkW));
+  Fifo#(2, ChannelA#(32, 32, sizeW, sourceW, sinkW)) queueA <- mkFifo;
+  Fifo#(2, ChannelD#(32, 32, sizeW, sourceW, sinkW)) queueD <- mkFifo;
+  Reg#(Bool) idle <- mkReg(True);
+
+  method canEnq = queueA.canEnq && idle;
+
+  method Action enq(DCacheReq req) if (queueA.canEnq && idle);
+    //queueA.enq(ChannelA{
+    //  opcode: req.opcode == Ld ? GetFull : PutData,
+    //  address: req.address,
+    //  source: source,
+    //  data: req.data,
+    //  mask: req.mask,
+    //  size: 2
+    //});
+
+    if (req.opcode == St && req.address == 'h10000000 && req.mask[0] == 1) begin
+      $write("%c", req.data[7:0]);
+      $fflush(stdout);
+    end
+
+    idle <= True;
+  endmethod
+
+  method valid = !idle;
+  method response = ?;//queueD.canDeq ? queueD.first.data : ?;
+  method Action deq if (!idle);//queueD.canDeq && !idle);
+    idle <= True;
+    //queueD.deq;
+  endmethod
+
+  interface TLMaster master;
+    interface channelA = toFifoO(queueA);
+    interface channelB = nullFifoI;
+    interface channelC = nullFifoO;
+    interface channelD = toFifoI(queueD);
+    interface channelE = nullFifoO;
+  endinterface
+endmodule

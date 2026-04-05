@@ -143,13 +143,16 @@ interface LsuIfc;
 
   (* always_ready *) method DCacheStats stats;
 
-  interface TLMaster#(32, 32, 8, 8, 8) master;
+  interface TLMaster#(32, 32, 8, 8, 8) cache_master;
+  interface TLMaster#(32, 32, 8, 8, 8) mmio_master;
 endinterface
 
 (* synthesize *)
-module mkLsu#(Bit#(8) dsource) (LsuIfc);
+module mkLsu#(Bit#(8) cacheSource, Bit#(8) mmioSource) (LsuIfc);
   Reg#(Bool) valid3[2] <- mkCReg(2, False);
+  Reg#(LsuRequest) request3 <- mkRegU;
   Reg#(Bit#(32)) value3 <- mkRegU;
+  Reg#(Bool) mmio3 <- mkRegU;
 
   Reg#(Bool) valid1[2] <- mkCReg(2, False);
   Reg#(AluRequest) request1 <- mkRegU;
@@ -157,12 +160,15 @@ module mkLsu#(Bit#(8) dsource) (LsuIfc);
 
   TxUART txUart <- mkTxUART(1_000_000 / 115200);
 
-  DCache#(8, 8, 8) cache <- mkDCache(dsource);
+  DCache#(8, 8, 8) cache <- mkDCache(cacheSource);
+
+  MmioController#(8, 8, 8) mmio <- mkMmioController(mmioSource);
 
   Reg#(CauseException) cause2 <- mkRegU;
   Reg#(LsuRequest) request2 <- mkRegU;
   Reg#(Bool) exception2 <- mkRegU;
   Reg#(Bit#(32)) pc2 <- mkRegU;
+  Reg#(Bool) mmio2 <- mkRegU;
 
   interface ExecIfc exec;
     method canEnter = !valid1[1];
@@ -179,8 +185,6 @@ module mkLsu#(Bit#(8) dsource) (LsuIfc);
       method valid = valid1[0] && cache.canLookup;
 
       method Action deq if (valid1[0] && cache.canLookup);
-        cause2 <= request1.instr.opcode == Load ? LoadAddressMisaligned : StoreAmoAddressMisaligned;
-        exception2 <= !lsuRequestAligned(getLsuRequest(request1));
         valid1[0] <= False;
         pc2 <= pc1;
 
@@ -188,12 +192,25 @@ module mkLsu#(Bit#(8) dsource) (LsuIfc);
 
         DCacheOpcode opcode = case (req.opcode) matches
           Storec : Sc;
-          Fence : Ld;
+          Fence : Nop;
           Loadr : Lr;
           Store : St;
           Load : Ld;
           default : Amo;
         endcase;
+
+        // Exception managment
+        cause2 <= request1.instr.opcode == Load ? LoadAddressMisaligned : StoreAmoAddressMisaligned;
+        if (!lsuRequestAligned(req)) opcode = Nop;
+        exception2 <= !lsuRequestAligned(req);
+
+        // Mmio access
+        if (req.address < 'h80000000 && (opcode == Ld || opcode == St)) begin
+          mmio2 <= True;
+          opcode = Nop;
+        end else begin
+          mmio3 <= False;
+        end
 
         DCacheAmo amo = case (req.opcode) matches
           Amominu : Minu;
@@ -221,42 +238,54 @@ module mkLsu#(Bit#(8) dsource) (LsuIfc);
 
     interface ExecStage2 exec2;
       method forward =
-        cache.valid ? Valid(lsuRequestRd(request2, cache.response)) : Invalid;
-      method valid = cache.valid && !valid3[1];
+        cache.valid && !mmio2 ? Valid(lsuRequestRd(request2, cache.response)) : Invalid;
+      method valid = cache.valid && mmio.canEnq && !valid3[1];
 
       method cause = cause2;
       method nextPc = pc2 + 4;
       method exception = exception2;
 
-      method Action deq(Bool commit) if (cache.valid && !valid3[1]);
+      method Action deq(Bool commit) if (cache.valid && mmio.canEnq && !valid3[1]);
         value3 <= lsuRequestRd(request2, cache.response);
         let address = (request2.address - 'h80000000) >> 2;
         let mask = lsuRequestMask(request2);
         let data = lsuRequestData(request2);
         if (commit) valid3[1] <= True;
+        request3 <= request2;
 
         cache.deq(commit);
 
+        if (commit && mmio2) begin
+          mmio.enq(DCacheReq{
+            opcode: request2.opcode == Load ? Ld : St,
+            mask: lsuRequestMask(request2),
+            data: lsuRequestData(request2),
+            address: request2.address,
+            amo: ?
+          });
+        end
+
         Bool isUart = request2.opcode == Store && request2.address == 'h10000000 && mask[0] == 1;
         if (commit && isUart) begin
-          //$write("%c", data[7:0]);
-          txUart.put(data[7:0]);
+          //txUart.put(data[7:0]);
           $fflush(stdout);
         end
       endmethod
     endinterface
 
     interface ExecStage3 exec3;
-      method valid = valid3[0];
-      method result = value3;
+      method valid = valid3[0] && (!mmio3 || mmio.valid);
+      method result = mmio3 ? mmio.response : value3;
 
       method Action deq if (valid3[0]);
+        if (mmio3) mmio.deq;
         valid3[0] <= False;
       endmethod
     endinterface
   endinterface
 
-  interface master = cache.master;
+  interface cache_master = cache.master;
+  interface mmio_master = mmio.master;
 
   method transmit = txUart.transmit;
 

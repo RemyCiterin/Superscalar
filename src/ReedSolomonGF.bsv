@@ -6,6 +6,8 @@
 // convenience `X` will be noted as `alpha`, to remove the ambiguity with the polynomes over
 // GF(256)...
 
+import Vector::*;
+
 typedef struct { Bit#(8) raw; } GF256 deriving(Bits, Ord, Eq);
 
 instance Literal#(GF256);
@@ -58,6 +60,25 @@ GF256 gf256_exp[512] = {
   'h58, 'hb0, 'h7d, 'hfa, 'he9, 'hcf, 'h83, 'h1b, 'h36, 'h6c, 'hd8, 'had, 'h47, 'h8e, 'h1, 'h2
 };
 
+GF256 gf256_inv[256] = {
+  'h0, 'h1, 'h8e, 'hf4, 'h47, 'ha7, 'h7a, 'hba, 'had, 'h9d, 'hdd, 'h98, 'h3d, 'haa, 'h5d, 'h96,
+	'hd8, 'h72, 'hc0, 'h58, 'he0, 'h3e, 'h4c, 'h66, 'h90, 'hde, 'h55, 'h80, 'ha0, 'h83, 'h4b, 'h2a,
+	'h6c, 'hed, 'h39, 'h51, 'h60, 'h56, 'h2c, 'h8a, 'h70, 'hd0, 'h1f, 'h4a, 'h26, 'h8b, 'h33, 'h6e,
+	'h48, 'h89, 'h6f, 'h2e, 'ha4, 'hc3, 'h40, 'h5e, 'h50, 'h22, 'hcf, 'ha9, 'hab, 'hc, 'h15, 'he1,
+	'h36, 'h5f, 'hf8, 'hd5, 'h92, 'h4e, 'ha6, 'h4, 'h30, 'h88, 'h2b, 'h1e, 'h16, 'h67, 'h45, 'h93,
+	'h38, 'h23, 'h68, 'h8c, 'h81, 'h1a, 'h25, 'h61, 'h13, 'hc1, 'hcb, 'h63, 'h97, 'he, 'h37, 'h41,
+	'h24, 'h57, 'hca, 'h5b, 'hb9, 'hc4, 'h17, 'h4d, 'h52, 'h8d, 'hef, 'hb3, 'h20, 'hec, 'h2f, 'h32,
+	'h28, 'hd1, 'h11, 'hd9, 'he9, 'hfb, 'hda, 'h79, 'hdb, 'h77, 'h6, 'hbb, 'h84, 'hcd, 'hfe, 'hfc,
+	'h1b, 'h54, 'ha1, 'h1d, 'h7c, 'hcc, 'he4, 'hb0, 'h49, 'h31, 'h27, 'h2d, 'h53, 'h69, 'h2, 'hf5,
+	'h18, 'hdf, 'h44, 'h4f, 'h9b, 'hbc, 'hf, 'h5c, 'hb, 'hdc, 'hbd, 'h94, 'hac, 'h9, 'hc7, 'ha2,
+	'h1c, 'h82, 'h9f, 'hc6, 'h34, 'hc2, 'h46, 'h5, 'hce, 'h3b, 'hd, 'h3c, 'h9c, 'h8, 'hbe, 'hb7,
+	'h87, 'he5, 'hee, 'h6b, 'heb, 'hf2, 'hbf, 'haf, 'hc5, 'h64, 'h7, 'h7b, 'h95, 'h9a, 'hae, 'hb6,
+	'h12, 'h59, 'ha5, 'h35, 'h65, 'hb8, 'ha3, 'h9e, 'hd2, 'hf7, 'h62, 'h5a, 'h85, 'h7d, 'ha8, 'h3a,
+	'h29, 'h71, 'hc8, 'hf6, 'hf9, 'h43, 'hd7, 'hd6, 'h10, 'h73, 'h76, 'h78, 'h99, 'ha, 'h19, 'h91,
+	'h14, 'h3f, 'he6, 'hf0, 'h86, 'hb1, 'he2, 'hf1, 'hfa, 'h74, 'hf3, 'hb4, 'h6d, 'h21, 'hb2, 'h6a,
+	'he3, 'he7, 'hb5, 'hea, 'h3, 'h8f, 'hd3, 'hc9, 'h42, 'hd4, 'he8, 'h75, 'h7f, 'hff, 'h7e, 'hfd
+};
+
 // This table returns the logarythms of the elements of GF(256) in base `alpha`
 Bit#(8) gf256_log[256] = {
   'h0, 'h0, 'h1, 'h19, 'h2, 'h32, 'h1a, 'hc6, 'h3, 'hdf, 'h33, 'hee, 'h1b, 'h68, 'hc7, 'h4b, 'h4,
@@ -78,28 +99,88 @@ Bit#(8) gf256_log[256] = {
   'hae, 'hd5, 'he9, 'he6, 'he7, 'had, 'he8, 'h74, 'hd6, 'hf4, 'hea, 'ha8, 'h50, 'h58, 'haf
 };
 
+// Multiplication implementation using look-up-tables to compute logarythms and powers in base
+// `alpha`
+function GF256 gf256_lut_mul(GF256 p, GF256 q);
+  Bit#(9) logP = zeroExtend(gf256_log[p.raw]);
+  Bit#(9) logQ = zeroExtend(gf256_log[q.raw]);
+
+  if (p == 0 || q == 0) return 0;
+  else return gf256_exp[logP + logQ];
+endfunction
+
+// Division implementation using look-pu-tables to compute logarythms and powers in base `alpha`.
+// This function returns `0` in case of a division by zero.
+function GF256 gf256_lut_div(GF256 p, GF256 q);
+  Bit#(9) logP = zeroExtend(gf256_log[p.raw]);
+  Bit#(9) logQ = zeroExtend(gf256_log[q.raw]);
+
+  if (p == 0 || q == 0) return 0;
+  else return gf256_exp[255 + logP - logQ];
+endfunction
+
 instance Arith#(GF256);
+  // Polynome addition in GF(2) are just bitwise additions
   function \+ (x, y) = GF256{raw: x.raw ^ y.raw};
 
+  // GF(256) is of caracteristic 2: `forall x. x + x = 0`
   function \- (x, y) = GF256{raw: x.raw ^ y.raw};
 
+  // GF(256) is of caracteristic 2: `forall x. x + x = 0`
   function negate (x) = x;
 
+  // In fact divisions are exact in GF(256) (because it is a field), so their is no need for modulo
+  // operations, we may also simply returns 0 because for all `a, b`, their exists a `q` such that
+  // `a = b * q + 0`.
   function \% (x, y) = error("no modulo operation on GF256");
 
   function \* (p, q);
-    Bit#(9) logP = zeroExtend(gf256_log[p.raw]);
-    Bit#(9) logQ = zeroExtend(gf256_log[q.raw]);
+    Bit#(16) ret = 0;
+    for (Integer i=0; i < 8; i = i + 1) begin
+      ret[7+i:i] = p.raw[i] == 1 ? ret[7+i:i] ^ q.raw : ret[7+i:i];
+    end
 
-    if (p == 0 || q == 0) return 0;
-    else return gf256_exp[logP + logQ];
+    for (Integer i=0; i < 8; i = i + 1) begin
+      ret[7:0] = ret[i+8] == 1 ? ret[7:0] ^ gf256_exp[i+8].raw : ret[7:0];
+    end
+
+    return GF256{raw: ret[7:0]};
   endfunction
 
+  // Division using a look-up-table to compute the inverse of each elements, this function
+  // returns `0` if the denominator is null.
   function \/ (p, q);
-    Bit#(9) logP = zeroExtend(gf256_log[p.raw]);
-    Bit#(9) logQ = zeroExtend(gf256_log[q.raw]);
-
-    if (p == 0 || q == 0) return 0;
-    else return gf256_exp[255 + logP - logQ];
+    return p * gf256_inv[q.raw];
   endfunction
 endinstance
+
+
+// Number of bytes of error correction
+typedef 8 RS_ECC_LEN;
+
+// Maximum number of elements in an encoded message
+typedef 254 RS_MAX_MESSAGE_LEN;
+
+typedef Vector#(n, GF256) Poly256#(numeric type n);
+
+function Poly256#(n) poly256_add(Poly256#(n) p, Poly256#(n) q);
+  Poly256#(n) r = replicate(0);
+
+  for (Integer i=0; i < valueof(n); i = i + 1) begin
+    r[i] = p[i] + q[i];
+  end
+
+  return r;
+endfunction
+
+function GF256 poly256_eval(Poly256#(n) p, GF256 x);
+  GF256 acc = 0;
+  GF256 pow = 1;
+
+  for (Integer i=0; i < valueof(n); i = i + 1) begin
+    acc = acc + p[i] * pow;
+    pow = pow * x;
+  end
+
+  return acc;
+endfunction

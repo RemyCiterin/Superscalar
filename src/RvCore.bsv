@@ -39,7 +39,7 @@ typedef struct {
 } ExecEntry deriving(Bits);
 
 (* synthesize *)
-module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource) (CpuIfc);
+module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_source) (CpuIfc);
   Bool debug = False;
   Bool logTrace = False;
   Bool useLateIssue = True;
@@ -105,7 +105,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource) (CpuIfc);
   ////////////////////////////////////////////////////////////////////////////
   Vector#(SupSize, ExecIfc#(1)) alu <- replicateM(mkExecAlu(useLateIssue));
 
-  let lsu_ifc <- mkLsu(dsource);
+  let lsu_ifc <- mkLsu(dsource, mmio_source);
   let uart = lsu_ifc.transmit;
   let lsu = lsu_ifc.exec;
 
@@ -592,5 +592,5 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource) (CpuIfc);
   method led = 0;
 
   interface imaster = fetch.master;
-  interface dmaster = lsu_ifc.master;
+  interface dmaster = lsu_ifc.cache_master;
 endmodule
