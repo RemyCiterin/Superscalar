@@ -16,7 +16,7 @@ import TLBram::*;
 import RvCore :: *;
 import RvSystem::*;
 
-import ReedSolomonGF::*;
+import LDPC::*;
 
 interface MainIfc;
   (* always_ready, always_enabled *)
