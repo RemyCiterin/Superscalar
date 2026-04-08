@@ -48,6 +48,7 @@ typedef enum {
   Load,
   Store,
   Fence,
+  Mret,
 
   // M
   Div,
@@ -168,6 +169,7 @@ function RvInstr decodeRvInstr(Bit#(32) data);
     imm = signExtend(data[31:20]);
 
     operation = case (tuple4(opcode, funct7, funct3, rs2)) matches
+      {7'b1110011, 7'b0011000, 3'b000, 5'b00010} : Mret;
       {7'b1110011, .*, 3'b101, .*} : Csrrw;
       {7'b1110011, .*, 3'b001, .*} : Csrrw;
       {7'b1110011, .*, 3'b110, .*} : Csrrs;
@@ -315,7 +317,7 @@ function RvInstr decodeRvInstr(Bit#(32) data);
     accessWidth: funct3[1:0],
     isUnsigned: funct3[2] == 1,
     immValid: utype || stype || itype || jtype || btype,
-    isSystem: operation == Csrrc || operation == Csrrs || operation == Csrrw
+    isSystem: operation == Csrrc || operation == Csrrs || operation == Csrrw || operation == Mret
   };
 endfunction
 

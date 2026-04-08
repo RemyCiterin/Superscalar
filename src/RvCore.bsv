@@ -40,6 +40,16 @@ typedef struct {
   Super#(Bit#(32)) uid;
 } ExecEntry deriving(Bits);
 
+typedef struct {
+  Epoch epoch;
+  Bit#(32) nextPc;
+  BranchPredTrain train;
+  CauseException cause;
+  Bool exception;
+  Bit#(32) tval;
+  Bit#(32) pc;
+} RedirectData deriving(Bits);
+
 (* synthesize *)
 module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_source) (CpuIfc);
   Bool debug = False;
@@ -86,7 +96,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
   ////////////////////////////////////////////////////////////////////////////
   // Pipeline front-end
   ////////////////////////////////////////////////////////////////////////////
-  Reg#(Tuple3#(Bit#(32), Epoch, BranchPredTrain)) redirectData <- mkRegU;
+  Reg#(RedirectData) redirectData <- mkRegU;
   Reg#(Bool) redirectState <- mkReg(False);
   FetchIfc fetch <- mkFetch(isource);
   DecodeIfc decode <- mkDecode(useMoveForwarding);
@@ -197,16 +207,6 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
   endrule
 
   ////////////////////////////////////////////////////////////////////////////
-  // Redirect the fetch stage to a new program counter
-  ////////////////////////////////////////////////////////////////////////////
-  rule redirect if (redirectState);
-    match {.pc, .epoch, .train} = redirectData;
-    fetch.redirect(pc, epoch);
-    redirectState <= False;
-    fetch.trainMis(train);
-  endrule
-
-  ////////////////////////////////////////////////////////////////////////////
   // Front-end stages connections
   ////////////////////////////////////////////////////////////////////////////
   rule fetch2decode;
@@ -247,7 +247,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
       Bool rdy = True;
       if (instr.isSystem && useSys) rdy = False;
       if (instr.isMemAccess && useMem) rdy = False;
-      if (instr.isSystem && !system.csrs.canEnter) rdy = False;
+      if (instr.isSystem && !system.exec.canEnter) rdy = False;
       if (instr.isMemAccess && !lsu.exec1.valid) rdy = False;
       if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec1.valid) rdy = False;
 
@@ -258,7 +258,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
           lsu.exec1.deq;
           useMem = True;
         end else if (instr.isSystem) begin
-          system.csrs.enter(csrExec2, Machine);
+          system.exec.enter(csrExec2, Machine);
           useSys = True;
         end else begin
           alu[i].exec1.deq;
@@ -374,7 +374,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
 
       if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec2.valid) rdy = False;
       if (instr.isMemAccess && !lsu.exec2.valid) rdy = False;
-      if (instr.isSystem && !system.csrs.canDeq) rdy = False;
+      if (instr.isSystem && !system.exec.canDeq) rdy = False;
       if (instr.isSystem && useSys) rdy = False;
       if (!rdy) stop = True;
 
@@ -389,9 +389,9 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
       end
 
       if (instr.isSystem) begin
-        exception = system.csrs.response.exception;
-        cause = system.csrs.response.cause;
-        nextPc = system.csrs.response.pc;
+        exception = system.exec.response.exception;
+        cause = system.exec.response.cause;
+        nextPc = system.exec.response.pc;
       end
 
       if (commitBuffer.exception[i]) begin
@@ -430,8 +430,8 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
           lsu.exec2.deq(!exception && !flush);
           useMem = True;
         end else if (instr.isSystem) begin
-          csrExec3 <= system.csrs.response.rd;
-          system.csrs.deq(!exception && !flush);
+          csrExec3 <= system.exec.response.rd;
+          system.exec.deq(!exception && !flush);
           useSys = True;
         end else begin
           alu[i].exec2.deq(!exception && !flush);
@@ -445,16 +445,21 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
             if (debug) $display("           %d redirect from 0x%h to 0x%h", hart, pc, nextPc);
 
             redirectState <= True;
-            redirectData <= tuple3(
-              nextPc, epoch+1,
-              BranchPredTrain{
+            redirectData <= RedirectData{
+              nextPc: nextPc,
+              epoch: epoch+1,
+              pc: pc,
+              exception: exception,
+              cause: cause,
+              tval: ?,
+              train: BranchPredTrain{
                 instrs: Valid(commitBuffer.instr),
                 state: commitBuffer.bstate,
                 nextPc: nextPc,
                 mask: consumed,
                 pc: pc
               }
-            );
+            };
 
             epoch <= epoch + 1;
             flush = True;
@@ -469,6 +474,23 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
     system.incrret(incrInstret);
     instret <= instrCounter;
     commitPc <= currentPc;
+  endrule
+
+
+  ////////////////////////////////////////////////////////////////////////////
+  // Redirect the fetch stage to a new program counter
+  ////////////////////////////////////////////////////////////////////////////
+  rule redirect if (redirectState);
+    if (redirectData.exception) begin
+      let nextPc <- system.exception(redirectData.pc, redirectData.cause, redirectData.tval);
+      fetch.redirect(nextPc, redirectData.epoch);
+      commitPc <= nextPc;
+    end else begin
+      fetch.redirect(redirectData.nextPc, redirectData.epoch);
+    end
+
+    fetch.trainMis(redirectData.train);
+    redirectState <= False;
   endrule
 
   ////////////////////////////////////////////////////////////////////////////
