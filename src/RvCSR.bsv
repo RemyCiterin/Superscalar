@@ -202,12 +202,14 @@ function CsrIfc readOnlyCsr(Bit#(32) r, CsrId i) = interface CsrIfc;
   method csr = i;
 endinterface;
 
-module mkRegCsr#(Reg#(Bit#(32)) r, CsrId i) (CsrIfc);
-  method write = r._write;
-  method flush = False;
-  method read = r;
-  method csr = i;
-endmodule
+function CsrIfc regCsr(Reg#(Bit#(32)) r, CsrId i);
+  return interface CsrIfc;
+    method write = r._write;
+    method flush = False;
+    method read = r;
+    method csr = i;
+  endinterface;
+endfunction
 
 interface CsrUnitIfc;
   (* always_ready *) method Bool canEnter;
@@ -317,4 +319,29 @@ module mkInstructionCounterCsr(InstructionCounterIfc);
   );
 endmodule
 
+interface TrapCsrIfc;
+  interface Reg#(Bit#(32)) mepc;
+  interface Reg#(Bit#(32)) mcause;
+  interface Reg#(Bit#(32)) mtvec;
+  interface Reg#(Bit#(32)) mtval;
 
+  interface List#(CsrIfc) csrs;
+endinterface
+
+module mkTrapCsr(TrapCsrIfc);
+  Reg#(Bit#(32)) mepc_reg <- mkConfigReg(?);
+  Reg#(Bit#(32)) mcause_reg <- mkConfigReg(?);
+  Reg#(Bit#(32)) mtvec_reg <- mkConfigReg(?);
+  Reg#(Bit#(32)) mtval_reg <- mkConfigReg(?);
+
+  interface mepc = asReg(mepc_reg);
+  interface mcause = asReg(mcause_reg);
+  interface mtvec = asReg(mtvec_reg);
+  interface mtval = asReg(mtval_reg);
+  interface csrs = lst(
+    regCsr(asReg(mepc_reg), 'h341),
+    regCsr(asReg(mtvec_reg), 'h305),
+    regCsr(asReg(mtval_reg), 'h343),
+    regCsr(asReg(mcause_reg), 'h342)
+  );
+endmodule

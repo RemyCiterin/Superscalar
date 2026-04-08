@@ -57,7 +57,7 @@ typedef enum{
 module mkLDPC_DECODER#(
     String rows_path,
     String cols_path
-  )(LDPC_DECODER_IDC#(num_edges, rows, cols))
+  ) (LDPC_DECODER_IDC#(num_edges, rows, cols))
   provisos(
     Alias#(col, Bit#(TLog#(cols))),
     Alias#(row, Bit#(TLog#(rows))),
@@ -65,6 +65,7 @@ module mkLDPC_DECODER#(
   );
 
   Reg#(Bool) allSatisfied <- mkRegU;
+  Reg#(Bit#(32)) numSatisfied <- mkRegU;
 
   Iterator#( rows ) row_iter <- mkIterator();
   Iterator#( cols ) col_iter <- mkIterator();
@@ -113,11 +114,14 @@ module mkLDPC_DECODER#(
     edge_iter.zero;
     cols_ram.put(False, edge_iter, ?);
     while (!edge_iter.stop) action
-      Int#(8) msg = message.sub( cols_ram.read );
+      col current_col = cols_ram.read;
+      Int#(8) msg = message.sub( current_col );
       beta.upd( edge_iter, pack(msg < 0 ? -msg : msg) );
-      cols_ram.put(False, edge_iter.next, ?);
       alpha.upd( edge_iter, msg < 0 );
+      extrinsic.upd( edge_iter, 0 );
+      llr.upd( current_col, msg );
 
+      cols_ram.put(False, edge_iter.next, ?);
       edge_iter.step;
     endaction
 
@@ -129,13 +133,15 @@ module mkLDPC_DECODER#(
       endaction
 
       ////////////////////////////////////////////////////////////////////////////
-      // Reset the extrinsic messages intermediate buffers
+      // Reset the intrinsic/extrinsic messages intermediate buffers
       ////////////////////////////////////////////////////////////////////////////
       row_iter.zero;
       while (!row_iter.stop) action
         extrinsic_sign.upd( row_iter, False );
         extrinsic_min1.upd( row_iter, maxBound );
         extrinsic_min2.upd( row_iter, maxBound );
+
+        unsatisfied.upd( row_iter, False );
 
         row_iter.step;
       endaction
@@ -145,13 +151,18 @@ module mkLDPC_DECODER#(
       ////////////////////////////////////////////////////////////////////////////
       edge_iter.zero;
       rows_ram.put(False, edge_iter, ?);
+      cols_ram.put(False, edge_iter, ?);
 
       while (!edge_iter.stop) action
         row current_row = rows_ram.read;
+        col current_col = cols_ram.read;
 
-        extrinsic_sign.upd(current_row, extrinsic_sign.sub(current_row) != alpha.sub(edge_iter));
+        Int#(8) diff = boundedMinus( llr.sub( current_col ), extrinsic.sub( edge_iter ) );
+        Bit#(8) b = pack(diff < 0 ? -diff : diff);
+        Bool a = diff < 0;
 
-        let b = beta.sub( edge_iter );
+        extrinsic_sign.upd(current_row, extrinsic_sign.sub(current_row) != a);
+
         let min1 = extrinsic_min1.sub( current_row );
         let min2 = extrinsic_min2.sub( current_row );
 
@@ -163,35 +174,12 @@ module mkLDPC_DECODER#(
         end
 
         rows_ram.put(False, edge_iter.next, ?);
+        cols_ram.put(False, edge_iter.next, ?);
         edge_iter.step;
       endaction
 
       ////////////////////////////////////////////////////////////////////////////
-      // Compute the intrinsic messages
-      ////////////////////////////////////////////////////////////////////////////
-      edge_iter.zero;
-      rows_ram.put(False, edge_iter, ?);
-
-      while (!edge_iter.stop) action
-        row current_row = rows_ram.read;
-
-        let b = beta.sub( edge_iter );
-        let a = alpha.sub( edge_iter );
-        let min1 = extrinsic_min1.sub( current_row );
-        let min2 = extrinsic_min2.sub( current_row );
-        let sign = extrinsic_sign.sub( current_row );
-
-        Int#(8) e = bit8_to_int8(b == min1 ? min2 : min1);
-
-        if (a != sign) extrinsic.upd( edge_iter, boundedMinus( 0, e ) );
-        else extrinsic.upd( edge_iter, e );
-
-        rows_ram.put(False, edge_iter.next, ?);
-        edge_iter.step;
-      endaction
-
-      ////////////////////////////////////////////////////////////////////////////
-      // Compute the Log-Likehood-Ratios using the extrinsic messages
+      // Compute the extrinsic messages/log-likehood-ratios
       ////////////////////////////////////////////////////////////////////////////
       col_iter.zero;
       while (!col_iter.stop) action
@@ -201,33 +189,50 @@ module mkLDPC_DECODER#(
       endaction
 
       edge_iter.zero;
+      rows_ram.put(False, edge_iter, ?);
       cols_ram.put(False, edge_iter, ?);
       while (!edge_iter.stop) action
+        row current_row = rows_ram.read;
         col current_col = cols_ram.read;
-        let e = extrinsic.sub( edge_iter );
+
+        let b = beta.sub( edge_iter );
+        let a = alpha.sub( edge_iter );
+        let min1 = extrinsic_min1.sub( current_row );
+        let min2 = extrinsic_min2.sub( current_row );
+        let sign = extrinsic_sign.sub( current_row );
+
+        Int#(8) e = bit8_to_int8(b == min1 ? min2 : min1);
+
+        if (a != sign) e = boundedMinus(0, e);
+
+        extrinsic.upd( edge_iter, e );
         llr.upd( current_col, boundedPlus( llr.sub( current_col ), e ) );
 
+        rows_ram.put(False, edge_iter.next, ?);
         cols_ram.put(False, edge_iter.next, ?);
         edge_iter.step;
       endaction
 
       ////////////////////////////////////////////////////////////////////////////
-      // Use the Log-Likehood-Ratios to check if all the constraints are satisfied
+      // Compute the variables-to-check (intrinsic) messages `alpha` and `beta`,
+      // also check if all the constraints are satisfied
       ////////////////////////////////////////////////////////////////////////////
-      row_iter.zero;
-      while (!row_iter.stop) action
-        unsatisfied.upd( row_iter, False );
-
-        row_iter.step;
-      endaction
-
       edge_iter.zero;
       rows_ram.put(False, edge_iter, ?);
       cols_ram.put(False, edge_iter, ?);
-
       while (!edge_iter.stop) action
         row current_row = rows_ram.read;
         col current_col = cols_ram.read;
+        let diff = boundedMinus( llr.sub( current_col ), extrinsic.sub( edge_iter ) );
+
+        if (edge_iter == 0) begin
+          $display("llr: ", llr.sub(current_col));
+          $display("extrinsic: ", extrinsic.sub(edge_iter));
+          $display("diff: ", diff);
+        end
+
+        beta.upd( edge_iter, pack(diff < 0 ? -diff : diff) );
+        alpha.upd( edge_iter, diff < 0 );
 
         unsatisfied.upd( current_row, unsatisfied.sub(current_row) != llr.sub(current_col) < 0 );
 
@@ -237,32 +242,24 @@ module mkLDPC_DECODER#(
       endaction
 
       row_iter.zero;
+      numSatisfied <= 0;
       allSatisfied <= True;
       while (!row_iter.stop) action
         if (unsatisfied.sub(row_iter)) allSatisfied <= False;
+        if (!unsatisfied.sub(row_iter)) numSatisfied <= numSatisfied + 1;
 
         row_iter.step;
       endaction
 
+      $display("satisfied: %d", numSatisfied);
       if (allSatisfied) iter <= 0;
-
-      ////////////////////////////////////////////////////////////////////////////
-      // Compute the variables-to-check (intrinsic) messages `alpha` and `beta`
-      ////////////////////////////////////////////////////////////////////////////
-      edge_iter.zero;
-      cols_ram.put(False, edge_iter, ?);
-      while (!edge_iter.stop) action
-        col current_col = cols_ram.read;
-        let diff = boundedMinus( llr.sub( current_col ), extrinsic.sub( edge_iter ) );
-        beta.upd( edge_iter, pack(diff < 0 ? -diff : diff) );
-        alpha.upd( edge_iter, diff < 0 );
-
-        cols_ram.put(False, edge_iter.next, ?);
-        edge_iter.step;
-      endaction
     endseq
 
-    state <= Done;
+    action
+      state <= Done;
+      let instant <- $time;
+      $display("finish at instant: ", instant/10);
+    endaction
   endseq);
 
   method Bool canRecv = state == Idle;

@@ -7,6 +7,7 @@ import ConfigReg :: *;
 import BRAMCore :: *;
 import RvDCache :: *;
 import RvICache :: *;
+import RvSystem :: *;
 import RegFile :: *;
 import RvInstr :: *;
 import RvFetch :: *;
@@ -29,8 +30,9 @@ interface CpuIfc;
   (* always_ready, always_enabled *)
   method Bit#(1) transmit;
 
-  interface TLMaster#(32, 32, 8, 8, 0) imaster;
-  interface TLMaster#(32, 32, 8, 8, 8) dmaster;
+  interface TLMaster#(32, 32, 8, 8, 0) icache_master;
+  interface TLMaster#(32, 32, 8, 8, 8) dcache_master;
+  interface TLMaster#(32, 32, 8, 8, 8) mmio_master;
 endinterface
 
 typedef struct {
@@ -61,10 +63,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
   ////////////////////////////////////////////////////////////////////////////
   // Define system registers
   ////////////////////////////////////////////////////////////////////////////
-  let cycleCsr <- mkCycleCsr;
-  let hartCsr <- mkMHartIdCsr(hart);
-  let instrCsr <- mkInstructionCounterCsr;
-  let system <- mkCsrUnit(List::concat(lst(cycleCsr, instrCsr.csrs, hartCsr)));
+  let system <- mkSystemUnit(hart);
   Reg#(AluRequest) csrExec2 <- mkRegU;
   Reg#(Bit#(32)) csrExec3 <- mkRegU;
 
@@ -248,7 +247,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
       Bool rdy = True;
       if (instr.isSystem && useSys) rdy = False;
       if (instr.isMemAccess && useMem) rdy = False;
-      if (instr.isSystem && !system.canEnter) rdy = False;
+      if (instr.isSystem && !system.csrs.canEnter) rdy = False;
       if (instr.isMemAccess && !lsu.exec1.valid) rdy = False;
       if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec1.valid) rdy = False;
 
@@ -259,7 +258,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
           lsu.exec1.deq;
           useMem = True;
         end else if (instr.isSystem) begin
-          system.enter(csrExec2, Machine);
+          system.csrs.enter(csrExec2, Machine);
           useSys = True;
         end else begin
           alu[i].exec1.deq;
@@ -375,7 +374,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
 
       if (!instr.isMemAccess && !instr.isSystem && !alu[i].exec2.valid) rdy = False;
       if (instr.isMemAccess && !lsu.exec2.valid) rdy = False;
-      if (instr.isSystem && !system.canDeq) rdy = False;
+      if (instr.isSystem && !system.csrs.canDeq) rdy = False;
       if (instr.isSystem && useSys) rdy = False;
       if (!rdy) stop = True;
 
@@ -390,9 +389,9 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
       end
 
       if (instr.isSystem) begin
-        exception = system.response.exception;
-        cause = system.response.cause;
-        nextPc = system.response.pc;
+        exception = system.csrs.response.exception;
+        cause = system.csrs.response.cause;
+        nextPc = system.csrs.response.pc;
       end
 
       if (commitBuffer.exception[i]) begin
@@ -431,8 +430,8 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
           lsu.exec2.deq(!exception && !flush);
           useMem = True;
         end else if (instr.isSystem) begin
-          csrExec3 <= system.response.rd;
-          system.deq(!exception && !flush);
+          csrExec3 <= system.csrs.response.rd;
+          system.csrs.deq(!exception && !flush);
           useSys = True;
         end else begin
           alu[i].exec2.deq(!exception && !flush);
@@ -467,7 +466,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
     forwardProgess <= consumed == replicate(False) ? forwardProgess+1 : 0;
     wbBuffer.put(commited, ExecEntry{instr: commitBuffer.instr, uid: commitBuffer.uid});
     commitBuffer.consume(consumed);
-    instrCsr.incrret(incrInstret);
+    system.incrret(incrInstret);
     instret <= instrCounter;
     commitPc <= currentPc;
   endrule
@@ -591,6 +590,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
   method transmit = uart;
   method led = 0;
 
-  interface imaster = fetch.master;
-  interface dmaster = lsu_ifc.cache_master;
+  interface icache_master = fetch.master;
+  interface dcache_master = lsu_ifc.cache_master;
+  interface mmio_master = lsu_ifc.mmio_master;
 endmodule

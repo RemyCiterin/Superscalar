@@ -16,8 +16,6 @@ import TLBram::*;
 import RvCore :: *;
 import RvSystem::*;
 
-import LDPC::*;
-
 interface MainIfc;
   (* always_ready, always_enabled *)
   method Bit#(8) led;
@@ -52,8 +50,8 @@ module mkMultiSoc(MainIfc);
 
   mkConnection(llc.master, dslave);
   mkConnection(xbar.masters[0], llc.slave);
-  mkIncreaseWidth(True, cpu0.dmaster, xbar.slaves[0]);
-  mkIncreaseWidth(True, cpu1.dmaster, xbar.slaves[1]);
+  mkIncreaseWidth(True, cpu0.dcache_master, xbar.slaves[0]);
+  mkIncreaseWidth(True, cpu1.dcache_master, xbar.slaves[1]);
 
   BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) imem1 <-
     mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
@@ -61,8 +59,8 @@ module mkMultiSoc(MainIfc);
   BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) imem0 <-
     mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
   TLSlave#(32, 32, 8, 8, 0) islave0 <- mkTLBram('h80000000, fromInteger(memSize), imem0);
-  mkConnection(cpu1.imaster, islave1);
-  mkConnection(cpu0.imaster, islave0);
+  mkConnection(cpu1.icache_master, islave1);
+  mkConnection(cpu0.icache_master, islave0);
 
 
   method transmit = cpu0.transmit;
@@ -81,18 +79,18 @@ module mkSoc(MainIfc);
   //  mkBRAMCore1BELoad(memSize, False, "Mem256.mem", False);
   //TLSlave#(32, 256, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
   //let llc <- mkLLC(vec(1, -1));
-  //mkIncreaseWidth(True, cpu0.dmaster, llc.slave);
+  //mkIncreaseWidth(True, cpu0.dcache_master, llc.slave);
   //mkConnection(llc.master, dslave);
 
   BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) dmem <-
     mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
   TLSlave#(32, 32, 8, 8, 8) dslave <- mkTLBram('h80000000, fromInteger(memSize), dmem);
-  mkConnection(cpu0.dmaster, dslave);
+  mkConnection(cpu0.dcache_master, dslave);
 
   BRAM_PORT_BE#(Bit#(32), Bit#(32), 4) imem <-
     mkBRAMCore1BELoad(memSize, False, "Mem32.mem", False);
   TLSlave#(32, 32, 8, 8, 0) islave <- mkTLBram('h80000000, fromInteger(memSize), imem);
-  mkConnection(cpu0.imaster, islave);
+  mkConnection(cpu0.icache_master, islave);
 
 
   method transmit = cpu0.transmit;
