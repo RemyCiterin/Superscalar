@@ -44,8 +44,10 @@ typedef struct {
   Epoch epoch;
   Bit#(32) nextPc;
   BranchPredTrain train;
-  CauseException cause;
+  CauseException ecause;
+  CauseInterrupt icause;
   Bool exception;
+  Bool interrupt;
   Bit#(32) tval;
   Bit#(32) pc;
 } RedirectData deriving(Bits);
@@ -450,7 +452,9 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
               epoch: epoch+1,
               pc: pc,
               exception: exception,
-              cause: cause,
+              interrupt: False,
+              ecause: cause,
+              icause: ?,
               tval: ?,
               train: BranchPredTrain{
                 instrs: Valid(commitBuffer.instr),
@@ -482,7 +486,11 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
   ////////////////////////////////////////////////////////////////////////////
   rule redirect if (redirectState);
     if (redirectData.exception) begin
-      let nextPc <- system.exception(redirectData.pc, redirectData.cause, redirectData.tval);
+      let nextPc <- system.exception(redirectData.pc, redirectData.ecause, redirectData.tval);
+      fetch.redirect(nextPc, redirectData.epoch);
+      commitPc <= nextPc;
+    end else if (redirectData.interrupt) begin
+      let nextPc <- system.interrupt(redirectData.pc, redirectData.icause, redirectData.tval);
       fetch.redirect(nextPc, redirectData.epoch);
       commitPc <= nextPc;
     end else begin
