@@ -24,6 +24,7 @@ _start:
   slli t0, tp, 12 // 4096 * hart
   la sp, stack_top
   sub sp, sp, t0
+  .word 0 // trigger a illegal instruction exception
   jal machine_main
 .infinite_loop:
   j .infinite_loop
@@ -34,8 +35,15 @@ _start:
   bnez t0, .wait_sync
   j .bss_zero_loop_end
 
-// Finish early the execution: print "ERROR!\n" and loop forever
+// Finish early the execution: print "ERROR!\n" and jump to the next instruction
 .trampoline:
+  // save registers on the stack
+  addi sp, sp, -16
+  sw t0, 0(sp)
+  sw t1, 4(sp)
+  sw t2, 8(sp)
+
+  // print "ERROR\n"
   li t0, 0x10000000
   la t1, .exception_string
 0:
@@ -43,7 +51,19 @@ _start:
   addi t1, t1, 1
   sb t2, (t0)
   bnez t2, 0b
-  j .infinite_loop
+
+  // set the return program counter to jump after the falty instruction
+  csrr t0, mepc
+  addi t0, t0, 4
+  csrw mepc, t0
+
+  // restore context
+  lw t0, 0(sp)
+  lw t1, 4(sp)
+  lw t2, 8(sp)
+  addi sp, sp, 16
+  mret
+  //j .infinite_loop
 
 .section .bss
 .align 4
