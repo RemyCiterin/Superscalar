@@ -209,7 +209,7 @@ module mkLsu#(Bit#(8) cacheSource, Bit#(8) mmioSource) (LsuIfc);
           mmio2 <= True;
           opcode = Nop;
         end else begin
-          mmio3 <= False;
+          mmio2 <= False;
         end
 
         DCacheAmo amo = case (req.opcode) matches
@@ -252,6 +252,7 @@ module mkLsu#(Bit#(8) cacheSource, Bit#(8) mmioSource) (LsuIfc);
         let data = lsuRequestData(request2);
         if (commit) valid3[1] <= True;
         request3 <= request2;
+        mmio3 <= mmio2;
 
         cache.deq(commit);
 

@@ -535,11 +535,11 @@ endinterface
 module mkMmioController#(Bit#(sourceW) source) (MmioController#(sizeW, sourceW, sinkW));
   Fifo#(2, ChannelA#(32, 32, sizeW, sourceW, sinkW)) queueA <- mkFifo;
   Fifo#(2, ChannelD#(32, 32, sizeW, sourceW, sinkW)) queueD <- mkFifo;
-  Reg#(Bool) idle <- mkReg(True);
+  Reg#(Bool) idle[2] <- mkCReg(2, True);
 
-  method canEnq = queueA.canEnq && idle;
+  method canEnq = queueA.canEnq && idle[1];
 
-  method Action enq(DCacheReq req) if (queueA.canEnq && idle);
+  method Action enq(DCacheReq req) if (queueA.canEnq && idle[1]);
     //queueA.enq(ChannelA{
     //  opcode: req.opcode == Ld ? GetFull : PutData,
     //  address: req.address,
@@ -554,13 +554,13 @@ module mkMmioController#(Bit#(sourceW) source) (MmioController#(sizeW, sourceW, 
       $fflush(stdout);
     end
 
-    idle <= True;
+    idle[1] <= False;
   endmethod
 
-  method valid = !idle;
+  method valid = !idle[0];
   method response = ?;//queueD.canDeq ? queueD.first.data : ?;
-  method Action deq if (!idle);//queueD.canDeq && !idle);
-    idle <= True;
+  method Action deq if (!idle[0]);//queueD.canDeq && !idle);
+    idle[0] <= True;
     //queueD.deq;
   endmethod
 
