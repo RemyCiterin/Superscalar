@@ -128,17 +128,18 @@ compile:
 build:
 	cabal run systolic-array
 
-
-.PHONY: sim
-sim:
+.PHONY: compile_sim
+compile_sim:
 	bsc $(BSC_FLAGS) $(BSIM_FLAGS) -p $(PACKAGES) -sim -u -g $(BSIM_MODULE) $(TOP)
 	bsc $(BSC_FLAGS) $(BSIM_FLAGS) -sim -e $(BSIM_MODULE) -o \
 		$(BSIM)/bsim $(BSIM)/*.ba
-	./bsim/bsim -m $(SIM_CYCLES)
 
 .PHONY: run
 run:
 	./bsim/bsim -m $(SIM_CYCLES)
+
+.PHONY: sim
+sim: compile_sim run
 
 
 .PHONY: yosys
