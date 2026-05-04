@@ -4,11 +4,15 @@ rtl
 elf_to_hex/elf_to_hex_*
 rust/target
 rust/firmware.asm
+trace.txt
+log.txt
 Mem*.hex
 Mem*.mem
+symbol_table.txt
 soft/zig-cache
 soft/zig-out
 soft/firmware.asm
 sdr/target
+sdr/firmware.asm
 csdr/build
 testbench/*.o
