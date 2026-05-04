@@ -270,6 +270,7 @@ module mkCsrUnit#(List#(CsrIfc) csrs) (CsrUnitIfc);
       exception: !legal,
       forward: Invalid,
       tval: instr.raw,
+      flush: doWrite,
       rd: value
     };
   endmethod
