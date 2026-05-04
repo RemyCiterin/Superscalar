@@ -76,6 +76,7 @@ module mkAlu#(Bool multiplication, Bool division, Bool branch) (AluIfc);
         forward: Invalid,
         pc: request.pc+4,
         exception: False,
+        flush: False,
         cause: ?,
         tval: ?
       };
@@ -85,6 +86,7 @@ module mkAlu#(Bool multiplication, Bool division, Bool branch) (AluIfc);
         forward: Invalid,
         pc: request.pc+4,
         exception: False,
+        flush: False,
         cause: ?,
         tval: ?
       };
@@ -94,6 +96,7 @@ module mkAlu#(Bool multiplication, Bool division, Bool branch) (AluIfc);
         forward: Invalid,
         pc: request.pc+4,
         exception: False,
+        flush: False,
         cause: ?,
         tval: ?
       };
@@ -107,6 +110,7 @@ typedef struct {
   Bool exception;
   CauseException cause;
   Bit#(32) tval;
+  Bool flush;
   Maybe#(Bit#(32)) forward;
 } AluResponse deriving(Bits);
 
@@ -191,6 +195,7 @@ function AluResponse execAlu(AluRequest req, Bool branch);
     cause: InstructionAddressMisaligned,
     exception: nextPc[1:0] != 0,
     forward: rd_fwd,
+    flush: False,
     tval: nextPc,
     pc: nextPc,
     rd: rd

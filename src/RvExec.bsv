@@ -33,6 +33,7 @@ interface ExecStage2;
   (* always_ready *) method CauseException cause;
   (* always_ready *) method Bit#(32) nextPc;
   (* always_ready *) method Bool exception;
+  (* always_ready *) method Bool flush;
   (* always_ready *) method Bool valid;
   method Action deq(Bool keep);
 endinterface
@@ -115,6 +116,7 @@ module mkExecAlu#(Bool lateAlu) (ExecIfc#(1));
     method forward = valid2[0] ? Valid(response2.rd) : Invalid;
     method exception = response2.exception;
     method cause = response2.cause;
+    method flush = response2.flush;
     method nextPc = response2.pc;
 
     method Action deq(Bool commit) if (valid2[0] && !valid3[1]);
@@ -241,6 +243,7 @@ module mkLsu#(Bit#(8) cacheSource, Bit#(8) mmioSource) (LsuIfc);
         cache.valid && !mmio2 ? Valid(lsuRequestRd(request2, cache.response)) : Invalid;
       method valid = cache.valid && mmio.canEnq && !valid3[1];
 
+      method flush = False;
       method cause = cause2;
       method nextPc = pc2 + 4;
       method exception = exception2;

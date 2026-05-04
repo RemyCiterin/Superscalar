@@ -381,17 +381,20 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
       if (!rdy) stop = True;
 
       let exception = alu[i].exec2.exception;
+      let redirect = alu[i].exec2.flush;
       let nextPc = alu[i].exec2.nextPc;
       let cause = alu[i].exec2.cause;
 
       if (instr.isMemAccess) begin
         exception = lsu.exec2.exception;
+        redirect = lsu.exec2.flush;
         nextPc = lsu.exec2.nextPc;
         cause = lsu.exec2.cause;
       end
 
       if (instr.isSystem) begin
         exception = system.exec.response.exception;
+        redirect = system.exec.response.flush;
         cause = system.exec.response.cause;
         nextPc = system.exec.response.pc;
       end
@@ -443,7 +446,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
 
         // Misprediction: redirect pipeline
         if (!flush) begin
-          if (exception || nextPc != commitBuffer.bprediction[i]) begin
+          if (exception || nextPc != commitBuffer.bprediction[i] || redirect) begin
             if (debug) $display("           %d redirect from 0x%h to 0x%h", hart, pc, nextPc);
 
             redirectState <= True;
@@ -465,7 +468,6 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
               }
             };
 
-            epoch <= epoch + 1;
             flush = True;
           end
         end
@@ -499,6 +501,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
 
     fetch.trainMis(redirectData.train);
     redirectState <= False;
+    epoch <= epoch + 1;
   endrule
 
   ////////////////////////////////////////////////////////////////////////////

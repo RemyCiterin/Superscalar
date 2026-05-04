@@ -6,7 +6,7 @@ SIM_CYCLES ?= 1000000000
 
 BUILD = build
 BSIM = bsim
-PACKAGES = ./src/:+
+PACKAGES = ./src/:./testbench/:+
 SIM_FILE = ./build/mkTop_sim
 
 LIB = \
@@ -132,7 +132,7 @@ build:
 compile_sim:
 	bsc $(BSC_FLAGS) $(BSIM_FLAGS) -p $(PACKAGES) -sim -u -g $(BSIM_MODULE) $(TOP)
 	bsc $(BSC_FLAGS) $(BSIM_FLAGS) -sim -e $(BSIM_MODULE) -o \
-		$(BSIM)/bsim $(BSIM)/*.ba
+		$(BSIM)/bsim $(BSIM)/*.ba testbench/consistency_checker.c
 
 .PHONY: run
 run:
