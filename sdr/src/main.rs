@@ -13,11 +13,13 @@ extern crate alloc;
 mod printer;
 mod params;
 mod kalloc;
+mod fixed;
+mod wifi;
 mod demodulation;
 
 use demodulation::frontend::*;
 use demodulation::backend::*;
-use demodulation::fixed::*;
+use fixed::*;
 
 use core::{
     arch::{global_asm},
@@ -55,11 +57,26 @@ unsafe extern "C" fn machine_main() -> () {
         kalloc::init();
 
         // Inform the other threads that they can start
-   START.store(true, Ordering::Release);
+        START.store(true, Ordering::Release);
     }
 
     // Wait until all the shared ressources are initialized
     while !START.load(Ordering::Acquire) {}
+
+    use wifi::*;
+    let mut wave: [(fixed32, fixed32); 64] = [(ZERO,ZERO); 64];
+
+    for i in 0..64 {
+        wave[i].0 = fixed32::cos(PI*fixed32::from(2*i) / fixed32::from(64));
+    }
+
+    let fft = fft64(&wave);
+
+    for i in 0..64 {
+        let rel = fft[i].0.raw() as f32 / 65536.0;
+        let img = fft[i].1.raw() as f32 / 65536.0;
+        println!("rel: {} img: {}", rel, img);
+    }
 
     let bytes_buffer = include_bytes!("wave.txt");
     let (b1, float_buffer, b2) = bytes_buffer.align_to::<f32>();

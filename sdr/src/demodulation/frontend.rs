@@ -1,10 +1,10 @@
 use super::*;
 
 use alloc::vec::Vec;
-const PI: fixed32 = super::fixed::PI;
-const ZERO: fixed32 = super::fixed::ZERO;
-const ONE: fixed32 = super::fixed::ONE;
-const TWO: fixed32 = super::fixed::TWO;
+const PI: fixed32 = crate::fixed::PI;
+const ZERO: fixed32 = crate::fixed::ZERO;
+const ONE: fixed32 = crate::fixed::ONE;
+const TWO: fixed32 = crate::fixed::TWO;
 
 pub struct FrontendConfig{
     /// Down sample with a factor 1/decimation

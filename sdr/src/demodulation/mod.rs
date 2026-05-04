@@ -1,5 +1,4 @@
-pub mod fixed;
-use fixed::*;
+use crate::fixed::*;
 
 pub struct BackendOutput<Symbol> {
     /// Output symbol (maximum one symbol per I/Q coeficients)
