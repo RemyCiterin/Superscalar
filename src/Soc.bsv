@@ -29,6 +29,15 @@ module mkMultiSoc(MainIfc);
   let cpu0 <- mkCPU(0, 0, 1, 3);
   let cpu1 <- mkCPU(1, 0, 2, 4);
 
+  rule set_interrupts;
+    cpu0.setTimerInterrupt(False);
+    cpu1.setTimerInterrupt(False);
+    cpu0.setExternalInterrupt(False);
+    cpu1.setExternalInterrupt(False);
+    cpu0.setSoftwareInterrupt(False);
+    cpu1.setSoftwareInterrupt(False);
+  endrule
+
   Integer memSize = 'hFFFFFFF;
 
   BRAM_PORT_BE#(Bit#(32), Bit#(256), 32) dmem <-
@@ -62,7 +71,6 @@ module mkMultiSoc(MainIfc);
   mkConnection(cpu1.icache_master, islave1);
   mkConnection(cpu0.icache_master, islave0);
 
-
   method transmit = cpu0.transmit;
 endmodule
 
@@ -72,6 +80,12 @@ module mkSoc(MainIfc);
   //return ifc;
 
   let cpu0 <- mkCPU(0, 0, 1, 2);
+
+  rule set_interrupts;
+    cpu0.setTimerInterrupt(False);
+    cpu0.setExternalInterrupt(False);
+    cpu0.setSoftwareInterrupt(False);
+  endrule
 
   Integer memSize = 'hFFFFFFF;
 

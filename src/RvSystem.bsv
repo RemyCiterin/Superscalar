@@ -9,8 +9,11 @@ interface SystemIfc;
   method ActionValue#(Bit#(32)) interrupt(Bit#(32) pc, CauseInterrupt cause, Bit#(32) tval);
   (* always_ready *) method Maybe#(CauseInterrupt) readyInterrupt;
   (* always_ready *) method Action incrret(Bit#(64) value);
-
   interface CsrUnitIfc exec;
+
+  (* always_ready, always_enabled *) method Action setExternalInterrupt(Bool set);
+  (* always_ready, always_enabled *) method Action setSoftwareInterrupt(Bool set);
+  (* always_ready, always_enabled *) method Action setTimerInterrupt(Bool set);
 endinterface
 
 (* synthesize *)
@@ -67,6 +70,50 @@ module mkSystemUnit#(Bit#(32) hart) (SystemIfc);
       statusCsr.mpp <= 0;
       priv <= new_priv;
     endaction;
+  end
+
+  if (request.instr.opcode == Sret) begin
+    response.exception = priv != Supervisor;
+    response.cause = IllegalInstruction;
+    response.pc = trapCsr.sepc;
+    response.forward = Invalid;
+    response.tval = request.pc;
+    response.flush = True;
+
+    do_deq = action
+      Priv new_priv = statusCsr.spp == 1 ? Supervisor : User;
+      statusCsr.sie <= statusCsr.spie;
+      statusCsr.spie <= 0;
+      statusCsr.spp <= 0;
+      priv <= new_priv;
+    endaction;
+  end
+
+  if (request.instr.opcode == FenceI) begin
+    response.pc = request.pc + 4;
+    response.exception = False;
+    response.forward = Invalid;
+    response.flush = True;
+  end
+
+  if (request.instr.opcode == Wfi) begin
+    response.pc =
+      statusCsr.mie == 1 && (pendingCsr.all & enableCsr.all) != 0 ?
+        request.pc + 4 : request.pc;
+    response.exception = False;
+    response.forward = Invalid;
+    response.flush = False;
+  end
+
+  if (request.instr.opcode == Ecall) begin
+    response.exception = True;
+    response.tval = request.pc;
+    response.cause =
+      case (priv) matches
+        Machine : EcallM;
+        Supervisor : EcallS;
+        User : EcallU;
+      endcase;
   end
 
   function ActionValue#(Bit#(32)) doException(Bool exn, Bit#(32) pc, Bit#(4) cause, Bit#(32) tval);
@@ -146,4 +193,8 @@ module mkSystemUnit#(Bit#(32) hart) (SystemIfc);
     let ret <- doException(False, pc, pack(cause), tval);
     return ret;
   endmethod
+
+  method Action setTimerInterrupt(Bool en) = pendingCsr.mtip._write(pack(en));
+  method Action setSoftwareInterrupt(Bool en) = pendingCsr.msip._write(pack(en));
+  method Action setExternalInterrupt(Bool en) = pendingCsr.meip._write(pack(en));
 endmodule

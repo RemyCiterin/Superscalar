@@ -48,7 +48,13 @@ typedef enum {
   Load,
   Store,
   Fence,
+  FenceI,
+  SfenceVma,
+  Ebreak,
+  Ecall,
   Mret,
+  Sret,
+  Wfi,
 
   // M
   Div,
@@ -169,7 +175,12 @@ function RvInstr decodeRvInstr(Bit#(32) data);
     imm = signExtend(data[31:20]);
 
     operation = case (tuple4(opcode, funct7, funct3, rs2)) matches
+      {7'b1110011, 7'b0010001, 3'b000, .*} : rd == 0 ? SfenceVma : Err;
       {7'b1110011, 7'b0011000, 3'b000, 5'b00010} : Mret;
+      {7'b1110011, 7'b0001000, 3'b000, 5'b00010} : Sret;
+      {7'b1110011, 7'b0000000, 3'b000, 5'b00000} : Ebreak;
+      {7'b1110011, 7'b0000000, 3'b000, 5'b00001} : Ecall;
+      {7'b1110011, 7'b0001000, 3'b000, 5'b00101} : Wfi;
       {7'b1110011, .*, 3'b101, .*} : Csrrw;
       {7'b1110011, .*, 3'b001, .*} : Csrrw;
       {7'b1110011, .*, 3'b110, .*} : Csrrs;
@@ -197,10 +208,17 @@ function RvInstr decodeRvInstr(Bit#(32) data);
       {7'b0000011, .*, .*} :
         funct3[1:0] == 'b11 || funct3 == 3'b110 ? Err : Load;
       {7'b0001111, .*, 3'b000, .*} : rd == 0 ? Fence : Err;
+      {7'b0001111, 7'b0000000, 3'b001, 5'b00000} : FenceI;
       .* : Err;
     endcase;
 
     if (operation == Load || operation == Fence) isMemAccess = True;
+
+    if (operation != SfenceVma) rs2 = 0;
+    let nullRd =
+      operation == Mret || operation == Sret || operation == Ebreak ||
+      operation == Ecall || operation == Wfi || operation == FenceI;
+    if (nullRd) rd = archZero;
   end
 
   if (stype) begin
@@ -227,6 +245,8 @@ function RvInstr decodeRvInstr(Bit#(32) data);
   if (utype) begin
     imm = signExtend({data[31:12], 12'b0});
     operation = opcode == 7'b0010111 ? Auipc : Lui;
+    rs1 = archZero;
+    rs2 = archZero;
   end
 
   if (jtype) begin
@@ -317,7 +337,10 @@ function RvInstr decodeRvInstr(Bit#(32) data);
     accessWidth: funct3[1:0],
     isUnsigned: funct3[2] == 1,
     immValid: utype || stype || itype || jtype || btype,
-    isSystem: operation == Csrrc || operation == Csrrs || operation == Csrrw || operation == Mret
+    isSystem:
+      operation == Csrrc || operation == Csrrs || operation == Csrrw ||
+      operation == Mret || operation == Sret || operation == FenceI ||
+      operation == Ecall || operation == Ebreak || operation == Wfi
   };
 endfunction
 

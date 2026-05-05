@@ -399,27 +399,27 @@ module mkInterruptPendingCsr(InterruptPendingCsrIfc);
 
   Reg#(Bit#(32)) mip_reg = concatReg(
     `ZERO_REG(20),
-    asReg(meip_reg),
+    asReg(readOnlyReg(meip_reg)),
     `ZERO_REG(1),
-    asReg(readOnlyReg(seip_reg)),//asReg(seip_reg),
+    asReg(readOnlyReg(seip_reg)),
     `ZERO_REG(1),
-    asReg(mtip_reg),
+    asReg(readOnlyReg(mtip_reg)),
     `ZERO_REG(1),
-    asReg(readOnlyReg(stip_reg)),//asReg(stip_reg),
+    asReg(readOnlyReg(stip_reg)),
     `ZERO_REG(1),
-    asReg(msip_reg),
+    asReg(readOnlyReg(msip_reg)),
     `ZERO_REG(1),
-    asReg(ssip_reg),
+    asReg(readOnlyReg(ssip_reg)),
     `ZERO_REG(1)
   );
 
   Reg#(Bit#(32)) sip_reg = concatReg(
     `ZERO_REG(22),
-    asReg(seip_reg),
+    asReg(readOnlyReg(seip_reg)),
     `ZERO_REG(3),
-    asReg(stip_reg),
+    asReg(readOnlyReg(stip_reg)),
     `ZERO_REG(3),
-    asReg(ssip_reg),
+    asReg(readOnlyReg(ssip_reg)),
     `ZERO_REG(1)
   );
 

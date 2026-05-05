@@ -33,6 +33,10 @@ interface CpuIfc;
   interface TLMaster#(32, 32, 8, 8, 0) icache_master;
   interface TLMaster#(32, 32, 8, 8, 8) dcache_master;
   interface TLMaster#(32, 32, 8, 8, 8) mmio_master;
+
+  (* always_ready, always_enabled *) method Action setExternalInterrupt(Bool set);
+  (* always_ready, always_enabled *) method Action setSoftwareInterrupt(Bool set);
+  (* always_ready, always_enabled *) method Action setTimerInterrupt(Bool set);
 endinterface
 
 typedef struct {
@@ -540,7 +544,6 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
       if (rs1 == 0) op1 = 0;
       if (rs2 == 0) op2 = 0;
 
-
       Bool rdy = True;
       Bool rdy1 = True;
       Bool rdy2 = True;
@@ -626,4 +629,8 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
   interface icache_master = fetch.master;
   interface dcache_master = lsu_ifc.cache_master;
   interface mmio_master = lsu_ifc.mmio_master;
+
+  method setTimerInterrupt = system.setTimerInterrupt;
+  method setExternalInterrupt = system.setExternalInterrupt;
+  method setSoftwareInterrupt = system.setSoftwareInterrupt;
 endmodule
