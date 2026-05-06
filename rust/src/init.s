@@ -24,7 +24,6 @@ _start:
   slli t0, tp, 12 // 4096 * hart
   la sp, stack_top
   sub sp, sp, t0
-  .word 0 // trigger a illegal instruction exception
   jal machine_main
 .infinite_loop:
   j .infinite_loop

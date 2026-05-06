@@ -29,6 +29,8 @@ interface ICache#(numeric type sizeW, numeric type sourceW);
   (* always_ready *) method Super#(Bit#(32)) response;
   method Action deq;
 
+  method Action flush;
+
   interface TLMaster#(32, 32, sizeW, sourceW, 0) master;
 
   (* always_ready *) method ICacheStats stats;
@@ -55,7 +57,7 @@ typedef struct {
 
 
 typedef enum {
-  Init,
+  Flush,
   Idle,
   Lookup,
   Refill,
@@ -77,6 +79,8 @@ module mkICache#(Bit#(sourceW) source) (ICache#(sizeW, sourceW));
   Vector#(NumWays, Super#(FORWARD_BRAM_BE#(Bit#(TAdd#(IndexW,OffsetW)), Bit#(32), 4))) dataRams <-
     replicateM(replicateM(mkForwardBRAMCoreBE((2 ** valueof(IndexW)) * (2 ** valueof(OffsetW)))));
 
+  Reg#(Bool) recvFlush <- mkReg(False);
+
   // A cache line is 2**5 = 32 bytes (= 256 bits)
   Integer lineSize = valueof(OffsetW) + supLogSize + 2;
   Integer ways = valueOf(NumWays);
@@ -90,16 +94,24 @@ module mkICache#(Bit#(sourceW) source) (ICache#(sizeW, sourceW));
   // State of the current request
   ////////////////////////////////////////////////////////////////////////////
   Reg#(Bit#(TAdd#(OffsetW,SupLogSize))) offset <- mkRegU;
-  Reg#(State) state[2] <- mkCReg(2, Init);
+  Reg#(State) state[2] <- mkCReg(2, Flush);
   Reg#(Physical) physical <- mkRegU;
   Reg#(Tag) tag <- mkRegU;
 
   ////////////////////////////////////////////////////////////////////////////
-  // Initialize cache
+  // Switch to the flush state after receiving a flush request
+  ////////////////////////////////////////////////////////////////////////////
+  rule to_flush if (state[0] == Idle && recvFlush);
+    recvFlush <= False;
+    state[0] <= Flush;
+  endrule
+
+  ////////////////////////////////////////////////////////////////////////////
+  // Initialize/Flush cache
   ////////////////////////////////////////////////////////////////////////////
   Reg#(Index) initIndex <- mkReg(0);
 
-  rule init if (state[0] == Init);
+  rule init if (state[0] == Flush);
     for (Integer i=0; i < ways; i = i + 1) tagRams[i].writePorts[0].request(initIndex, Invalid);
     if (initIndex + 1 == 0) state[0] <= Idle;
     initIndex <= initIndex + 1;
@@ -185,8 +197,8 @@ module mkICache#(Bit#(sourceW) source) (ICache#(sizeW, sourceW));
   ////////////////////////////////////////////////////////////////////////////
   // Enter a new request to the cache
   ////////////////////////////////////////////////////////////////////////////
-  method Bool canLookup = state[1] == Idle;
-  method Action lookup(Bit#(32) address) if (state[1] == Idle);
+  method Bool canLookup = state[1] == Idle && !recvFlush;
+  method Action lookup(Bit#(32) address) if (state[1] == Idle && !recvFlush);
     Physical phys = unpack(address);
     randomWay <= randomWay + 1;
     numReq <= numReq + 1;
@@ -202,6 +214,13 @@ module mkICache#(Bit#(sourceW) source) (ICache#(sizeW, sourceW));
 
     state[1] <= Lookup;
     physical <= phys;
+  endmethod
+
+  ////////////////////////////////////////////////////////////////////////////
+  // Request a cache flush
+  ////////////////////////////////////////////////////////////////////////////
+  method Action flush;
+    recvFlush <= True;
   endmethod
 
   ////////////////////////////////////////////////////////////////////////////

@@ -32,6 +32,8 @@ interface FetchIfc;
   (* always_ready *) method Bit#(32) numMisPred;
 
   (* always_ready *) method ICacheStats stats;
+
+  method Action flush;
 endinterface
 
 (* synthesize *)
@@ -125,6 +127,8 @@ module mkFetch#(Bit#(8) isource) (FetchIfc);
   method trainMis = bpred.trainMis;
 
   method stats = icache.stats;
+
+  method flush = icache.flush;
 endmodule
 
 typedef struct {

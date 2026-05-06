@@ -8,7 +8,7 @@ use crate::params::KALLOC_SIZE;
 pub static KERNEL_ALLOCATOR: LockedHeap = LockedHeap::empty();
 
 extern "C" {
-    static mut KALLOC_BUFFER: [u8; KALLOC_SIZE];
+    pub static mut KALLOC_BUFFER: [u8; KALLOC_SIZE];
 }
 
 #[allow(static_mut_refs)]

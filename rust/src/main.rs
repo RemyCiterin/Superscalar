@@ -11,19 +11,29 @@ extern crate alloc;
 
 #[macro_use]
 mod printer;
+mod pointer;
 mod params;
 mod kalloc;
+mod palloc;
+mod process;
 
 use core::{
     arch::{global_asm, asm},
     panic::PanicInfo,
 };
 
-use riscv::register;
 use spinning_top::RwSpinlock;
-use spinning_top::Spinlock;
+use alloc::sync::Arc;
+use process::*;
+
+lazy_static!{
+    static ref PROCESSES: RwSpinlock<Vec<Arc<Process>>> = RwSpinlock::new(vec![]);
+}
+
+use riscv::register;
 
 global_asm!(include_str!("init.s"));
+global_asm!(include_str!("trampoline.s"));
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -80,6 +90,9 @@ unsafe extern "C" fn machine_main() -> () {
         // Init kernel allocator
         kalloc::init();
 
+        // Init page allocator
+        palloc::init();
+
         // Inform the other threads that they can start
         START.store(true, Ordering::Release);
     }
@@ -87,31 +100,42 @@ unsafe extern "C" fn machine_main() -> () {
     // Wait until all the shared ressources are initialized
     while !START.load(Ordering::Acquire) {}
 
-    let mut cycle = register::mcycle::read();
-    let mut instr = register::minstret::read();
-    VECTOR.write().push(42);
+    riscv::register::mtvec::write(
+        user_trap as usize, register::utvec::TrapMode::Direct);
 
-    {
-        let guard = VECTOR.read();
-        println!("vector[0] = {:?}", guard);
-        cycle = register::mcycle::read() - cycle;
-        instr = register::minstret::read() - instr;
-        println!("{} cycle: {} instr: {}", tp, cycle, instr);
-        println!();
+    PROCESSES.write().push(Arc::new(Process::new(user_main1).unwrap()));
+    PROCESSES.write().push(Arc::new(Process::new(user_main2).unwrap()));
 
-        drop(guard);
+    loop {
+        for p in PROCESSES.write().iter_mut() {
+            p.run();
+            p.ctx.write().pc += 4;
+        }
     }
+}
 
+#[inline]
+pub fn ifence() { unsafe {asm!("fence.i")} }
+
+#[inline]
+pub fn ecall() { unsafe{asm!("ecall")} }
+
+pub fn user_main1(_: usize) -> () {
     for i in 0..256 {
         if i % 16 == 0 { print!("\n\t"); }
         print!("'h{:x}, ", gf::div(1, i as u8));
     }
 
-    //let mut x: u8 = 1;
-    //for i in 0..255 {
-    //    println!("alpha^{i} = 0x{x:x}");
-    //    x = gf::mul(x, 2);
-    //}
+    println!();
 
-    loop {}
+    loop {ecall()}
+}
+
+pub fn user_main2(pid: usize) -> () {
+    for i in 0..10 {
+        println!("Hello world {i} from user: {pid}");
+        ecall();
+    }
+
+    loop {ecall()}
 }

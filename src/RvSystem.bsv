@@ -116,6 +116,12 @@ module mkSystemUnit#(Bit#(32) hart) (SystemIfc);
       endcase;
   end
 
+  if (request.instr.opcode == Ebreak) begin
+    response.cause = Breakpoint;
+    response.tval = request.pc;
+    response.exception = True;
+  end
+
   function ActionValue#(Bit#(32)) doException(Bool exn, Bit#(32) pc, Bit#(4) cause, Bit#(32) tval);
     actionvalue
       Bool toS =

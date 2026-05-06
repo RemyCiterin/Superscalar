@@ -423,7 +423,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
         if (logTrace) $fdisplay(trace_file, "E %d 0 C", uid);
         if (!exception && !flush && logTrace) $fdisplay(trace_file, "S %d 0 Wb", uid);
 
-        if (exception && !flush) begin
+        if (False && exception && !flush) begin
           $display(
             "pc: %h cycle: %d instret: %d mis-pred: %d",
             pc, cycle, instret, fetch.numMisPred
@@ -441,6 +441,7 @@ module mkCPU#(Bit#(32) hart, Bit#(8) isource, Bit#(8) dsource, Bit#(8) mmio_sour
         end else if (instr.isSystem) begin
           csrExec3 <= system.exec.response.rd;
           system.exec.deq(!exception && !flush);
+          if (instr.opcode == FenceI) fetch.flush;
           useSys = True;
         end else begin
           alu[i].exec2.deq(!exception && !flush);

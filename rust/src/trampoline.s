@@ -136,28 +136,28 @@ user_trap:
   addi sp, sp, 15*4
   ret
 
-.align 4
-machine_handler:
-  csrrw a0,mscratch,a0
-  sw a1, 0 * 4(a0)
-  sw a2, 1 * 4(a0)
-  sw a3, 2 * 4(a0)
-  sw a4, 3 * 4(a0)
-
-  lw a1, 4 * 4(a0) // interval
-  lw a2, 5 * 4(a0) // *mtimecmp
-
-  lw a3, 0(a2)     // mtimecmp
-  add a3, a3, a1
-  sw a3, 0(a2)     // mtimecmp <- old(mtimecmp) + interval
-
-  li a1,2
-  csrs sip, a1 // Set bit 2 of sip
-
-  lw a1, 0 * 4(a0)
-  lw a2, 1 * 4(a0)
-  lw a3, 2 * 4(a0)
-  lw a4, 3 * 4(a0)
-  csrrw a0,mscratch,a0
-  mret
+// .align 4
+// machine_handler:
+//   csrrw a0,mscratch,a0
+//   sw a1, 0 * 4(a0)
+//   sw a2, 1 * 4(a0)
+//   sw a3, 2 * 4(a0)
+//   sw a4, 3 * 4(a0)
+//
+//   lw a1, 4 * 4(a0) // interval
+//   lw a2, 5 * 4(a0) // *mtimecmp
+//
+//   lw a3, 0(a2)     // mtimecmp
+//   add a3, a3, a1
+//   sw a3, 0(a2)     // mtimecmp <- old(mtimecmp) + interval
+//
+//   li a1,2
+//   csrs sip, a1 // Set bit 2 of sip
+//
+//   lw a1, 0 * 4(a0)
+//   lw a2, 1 * 4(a0)
+//   lw a3, 2 * 4(a0)
+//   lw a4, 3 * 4(a0)
+//   csrrw a0,mscratch,a0
+//   mret
 

@@ -178,8 +178,8 @@ function RvInstr decodeRvInstr(Bit#(32) data);
       {7'b1110011, 7'b0010001, 3'b000, .*} : rd == 0 ? SfenceVma : Err;
       {7'b1110011, 7'b0011000, 3'b000, 5'b00010} : Mret;
       {7'b1110011, 7'b0001000, 3'b000, 5'b00010} : Sret;
-      {7'b1110011, 7'b0000000, 3'b000, 5'b00000} : Ebreak;
-      {7'b1110011, 7'b0000000, 3'b000, 5'b00001} : Ecall;
+      {7'b1110011, 7'b0000000, 3'b000, 5'b00000} : Ecall;
+      {7'b1110011, 7'b0000000, 3'b000, 5'b00001} : Ebreak;
       {7'b1110011, 7'b0001000, 3'b000, 5'b00101} : Wfi;
       {7'b1110011, .*, 3'b101, .*} : Csrrw;
       {7'b1110011, .*, 3'b001, .*} : Csrrw;
@@ -340,7 +340,8 @@ function RvInstr decodeRvInstr(Bit#(32) data);
     isSystem:
       operation == Csrrc || operation == Csrrs || operation == Csrrw ||
       operation == Mret || operation == Sret || operation == FenceI ||
-      operation == Ecall || operation == Ebreak || operation == Wfi
+      operation == Ecall || operation == Ebreak || operation == Wfi ||
+      operation == SfenceVma
   };
 endfunction
 
