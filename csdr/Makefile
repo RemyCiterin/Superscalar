@@ -14,11 +14,21 @@ TARGETS = $(patsubst src/%.c,build/%.o, $(TGTS))
 CC = riscv32-none-elf-gcc
 LD = riscv32-none-elf-ld
 
+compiler_rt:
+	echo 'comptime { _ = @import("std"); }' > build/dummy.zig
+	zig build-lib build/dummy.zig \
+	  -target riscv32-freestanding \
+	  -mcpu=generic_rv32+m \
+	  -fcompiler-rt \
+	  -OReleaseSmall \
+	        -femit-bin=build/libcompiler_rt.a
+
 build/%.o: src/%.c
 	$(CC) -c $(CFLAGS) -o $@ $<
 
-all: $(TARGETS)
-	$(CC) $(CFLAGS) -Tsrc/linker.ld build/*.o src/*.s -o build/decode -lgcc
+all: $(TARGETS) compiler_rt
+	$(CC) $(CFLAGS) -Tsrc/linker.ld build/*.o src/*.s build/libcompiler_rt.a -o build/decode -lgcc
+	riscv32-none-elf-objdump build/decode -S > build/decode.asm
 
 run:
 	./build/decode

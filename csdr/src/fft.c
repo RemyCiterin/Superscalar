@@ -1,4 +1,5 @@
 #include "fft.h"
+#include "stdlib.h"
 
 #define TABLE_SIZE 4096
 static fixed table_rel[TABLE_SIZE];

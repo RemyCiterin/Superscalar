@@ -31,7 +31,7 @@ pkgs.mkShell {
     # RTL simulation
     pkgs.bluespec
     pkgs.verilator
-    pkgs.verilog
+    pkgs.iverilog
     pkgs.gtkwave
     izumi
 
@@ -44,10 +44,13 @@ pkgs.mkShell {
     pkgs.trellis
     pkgs.icestorm
     pkgs.python313Packages.apycula
-    pkgsCross.buildPackages.gcc
+    # pkgsCross.buildPackages.gcc
+    pkgs.pkgsCross.riscv32-embedded.buildPackages.binutils
+    pkgs.pkgsCross.riscv32-embedded.buildPackages.gcc
+    pkgs.zig
     pkgs.openfpgaloader
 
-    pkgs.zig_0_12
+    # pkgs.zig_0_12
 
     # View dot files
     pkgs.xdot

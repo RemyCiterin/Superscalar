@@ -1,9 +1,6 @@
 #![no_std]
 #![no_main]
 #![feature(alloc_error_handler)]
-#![feature(allocator_api)]
-#![feature(alloc_layout_extra)]
-#![feature(get_mut_unchecked)]
 #![allow(dead_code)]
 
 #[macro_use]

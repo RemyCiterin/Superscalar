@@ -1,9 +1,6 @@
 #![no_std]
 #![no_main]
 #![feature(alloc_error_handler)]
-#![feature(allocator_api)]
-#![feature(alloc_layout_extra)]
-#![feature(get_mut_unchecked)]
 #![allow(dead_code)]
 
 #[macro_use]
@@ -101,7 +98,7 @@ unsafe extern "C" fn machine_main() -> () {
     while !START.load(Ordering::Acquire) {}
 
     riscv::register::mtvec::write(
-        user_trap as usize, register::utvec::TrapMode::Direct);
+        user_trap as *const () as usize, register::utvec::TrapMode::Direct);
 
     PROCESSES.write().push(Arc::new(Process::new(user_main1).unwrap()));
     PROCESSES.write().push(Arc::new(Process::new(user_main2).unwrap()));

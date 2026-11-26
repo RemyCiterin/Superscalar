@@ -16,14 +16,13 @@
 #include "fft.h"
 #include "frontend.h"
 
-#define WAVEFILE_SIZE (4096*32)
+#define WAVEFILE_SIZE (128*1)
 extern float WAVEFILE[WAVEFILE_SIZE];
 
 int machine_main() {
   print_fixed(fixed_mul(2*16*PI, FIXED(401) / 44100));
   printf("\n");
 
-  while (1) {}
   init_fft();
   init_backman();
 

@@ -1,5 +1,5 @@
 all:
-	cargo +nightly build -Z build-std=core,alloc --release
+	cargo +nightly build -Z build-std=core,alloc -Zjson-target-spec --release
 
 qemu:
 	qemu-system-riscv32 \
