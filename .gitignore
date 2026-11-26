@@ -16,3 +16,7 @@ sdr/target
 sdr/firmware.asm
 csdr/build
 testbench/*.o
+csrd/firmware.asm
+sdr/firmware.asm
+rust/firmware.asm
+soft/firmware.asm
